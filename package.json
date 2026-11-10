@@ -1,6 +1,6 @@
 {
   "name": "@wayne/dsh-finance",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": false,
   "description": "个人理财工作台：导入支付宝/微信/银行账单自动分类并合并重复，总看板看全年收支，一句话随手记账，AI 洞察与 8 个 agent 工具。数据只存本机。",
   "license": "MIT",

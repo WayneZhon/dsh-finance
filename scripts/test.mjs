@@ -394,6 +394,7 @@ const snapshotOf = (ledger, month, now) => {
     goals,
     tips,
     monthsAvailable,
+    dataNotes: [],
     yearly: {
       year: month.slice(0, 4),
       income,
@@ -1595,6 +1596,12 @@ test("cross-year month labels carry the year so 11→12→1 is not read backward
   assert.equal(labels.length, 12);
   // 样本账本只跨一个月，至少不应出现空标签
   assert.ok(labels.every((label) => /月/.test(label)), `every label names a month: ${labels.join(",")}`);
+});
+
+test("a ledger whose income clearly lags spending says so on the overview", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  // 样本账本收支正常 → 不该有警告
+  assert.equal(byClass(tree, "dshfw-datanote").length, 0, "no warning when income and expense are proportionate");
 });
 
 test("a real ledger never shows the demo notice", async () => {

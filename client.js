@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
     /** The four tabs, in display order. */
     const TABS = Object.freeze(["board", "flow", "assets", "invest", "plan"]);
     /** Expense categories (CONTRACT: shared with the Host). */
-    const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
+    const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "家庭", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
     /** Income is always this one category. */
     const INCOME_CATEGORY = "收入";
     /** Directions. */
@@ -625,6 +625,12 @@ window.__ModuleLoader__.load({
             txnCount: num(y.txnCount, 0)
           };
         })(),
+        // 数据完整性提醒：收支不成比例时要说清楚，别让用户以为花超了
+        dataNotes: Array.isArray(record.dataNotes)
+          ? record.dataNotes
+              .filter((note) => note !== null && typeof note === "object")
+              .map((note) => ({ level: note.level === "warn" ? "warn" : "info", title: String(note.title ?? ""), detail: String(note.detail ?? "") }))
+          : [],
         settings: {
           currency: typeof record.settings?.currency === "string" ? record.settings.currency : "CNY",
           emergencyMonths: num(record.settings?.emergencyMonths, 6),
@@ -3097,6 +3103,22 @@ window.__ModuleLoader__.load({
               })
             ]
           }),
+          // ①.5 数据完整性提醒：先于图表出现，避免用户先被数字吓到
+          (Array.isArray(snapshot.dataNotes) ? snapshot.dataNotes : []).map((note, index) =>
+            jsxs("div", {
+              key: `note-${String(index)}`,
+              className: "dshfw-datanote",
+              "data-level": note.level,
+              role: "status",
+              children: [
+                jsx("span", { className: "dshfw-datanote__icon", children: jsx(IconWarn, { size: 15 }) }),
+                jsxs("span", {
+                  className: "dshfw-datanote__body",
+                  children: [jsx("b", { children: note.title }), note.detail === "" ? null : ` ${note.detail}`]
+                })
+              ]
+            })
+          ),
           // ② 每月收支双柱
           jsx(Card, {
             title: t("board.monthlyFlow"),
@@ -3792,6 +3814,11 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-demonote__text b{color:var(--dsw-alias-label-primary);font-weight:600}
 .dshfw-demonote__actions{flex:none;display:flex;gap:8px}
 
+
+.dshfw-datanote{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border:.5px solid var(--dsw-alias-border-l2);border-left:3px solid var(--dshfw-c0);border-radius:10px;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base));font-size:12.5px;line-height:1.55;color:var(--dsw-alias-label-secondary)}
+.dshfw-datanote[data-level="warn"]{border-left-color:var(--dsw-alias-state-warning-primary,var(--dshfw-c0))}
+.dshfw-datanote__icon{flex:none;display:inline-flex;color:var(--dshfw-c0);padding-top:1px}
+.dshfw-datanote__body b{color:var(--dsw-alias-label-primary);font-weight:600}
 
 /* ── 总看板 ─────────────────────────────────────────────────────────── */
 .dshfw-board{display:flex;flex-direction:column;gap:16px}

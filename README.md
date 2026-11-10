@@ -129,7 +129,7 @@ https://github.com/WayneZhon/dsh-finance/archive/refs/tags/v1.3.0.tar.gz
 git clone https://github.com/WayneZhon/dsh-finance.git
 cd dsh-finance
 npm run build     # 把 locale 字典编译进 client.js
-npm test          # 201 例，全离线，不需要模型也不需要网络
+npm test          # 203 例，全离线，不需要模型也不需要网络
 ```
 
 然后用 `install_bundle` 指向这个目录的绝对路径。
@@ -185,7 +185,7 @@ npm test          # 201 例，全离线，不需要模型也不需要网络
 ```bash
 npm run build           # 重建 client.js
 npm run check           # 语法 + 构建产物是否最新
-npm test                # 201 例：Host 140 + 集成 21 + 面板 40
+npm test                # 203 例：Host 141 + 集成 21 + 面板 41
 npm run pack:check      # 看发布出去的 tarball 里有什么
 npm run prepublishOnly  # 发布前门禁（npm publish 会自动跑）
 ```
