@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
     /** API root. */
     const API_BASE = "/dsh-finance/api";
     /** The four tabs, in display order. */
-    const TABS = Object.freeze(["board", "flow", "assets", "invest", "plan"]);
+    const TABS = Object.freeze(["board", "flow", "assets", "policy", "invest", "plan"]);
     /** Expense categories (CONTRACT: shared with the Host). */
     const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "家庭", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
     /** Income is always this one category. */
@@ -88,6 +88,10 @@ window.__ModuleLoader__.load({
     const LIABILITY_KINDS = Object.freeze(["mortgage", "car", "credit", "consumer", "other"]);
     /** Holding types (CONTRACT). */
     const HOLDING_TYPES = Object.freeze(["fund", "stock", "bond", "other"]);
+    /** 保单/存款/理财：三者共用一个模型（一笔钱 + 一个关键日期 + 一个周期）。 */
+    const POLICY_KINDS = Object.freeze(["insurance", "deposit", "wealth", "other"]);
+    const INSURANCE_TYPES = Object.freeze(["medical", "critical", "accident", "life", "annuity", "car", "property", "other"]);
+    const PAY_CYCLES = Object.freeze(["yearly", "half_year", "quarterly", "monthly", "once"]);
     /** How many rows the import preview shows. */
     const PREVIEW_ROWS = 30;
     /** How many months `GET /txns` asks for at once. */
@@ -115,6 +119,35 @@ window.__ModuleLoader__.load({
 
     // ── small pure helpers ────────────────────────────────────────────────
     const pad2 = (value) => String(value).padStart(2, "0");
+
+
+    /**
+     * 轻量意图判断：这句话是在记一笔流水，还是给资产/持仓/保单建档？
+     *
+     * 只做**关键词判断**，真正的字段解析交给 Host 的 `/parse`（那边有完整
+     * 的金额与日期解析器，且可测试）。这里只为了让输入框能立刻告诉用户
+     * 「这句话会被记成什么」，避免按了回车才发现进错了表。
+     *
+     * @param {string} text 用户输入
+     * @returns {"txn" | "policy" | "holding" | "asset"} 记录类型
+     */
+    const detectQuickKind = (text) => {
+      const source = String(text ?? "").toLowerCase();
+      if (source.trim() === "") return "txn";
+      const has = (words) => words.some((word) => source.includes(word));
+      // 保单/存款/理财
+      if (has(["保险", "保单", "保费", "保额", "重疾", "续保", "定期", "存款", "存单", "理财", "到期", "年化", "利率"])) {
+        // 「今天交了保费 4860」是流水，不是建档
+        return /花了|付了|交了|消费|支出/u.test(source) ? "txn" : "policy";
+      }
+      // 持仓
+      if (has(["股", "基金", "etf", "持仓", "成本", "份额", "建仓"])) {
+        return /花了|支付|消费/u.test(source) ? "txn" : "holding";
+      }
+      // 资产
+      if (has(["活期", "余额有", "房产", "房子值", "公积金", "账户有", "现金有", "估值"])) return "asset";
+      return "txn";
+    };
 
     /**
      * 一句话记账的解析器：「35 咖啡」「昨晚打车 42」「发工资 28600」。
@@ -611,6 +644,51 @@ window.__ModuleLoader__.load({
         monthsAvailable: Array.isArray(record.monthsAvailable) ? record.monthsAvailable.filter((key) => typeof key === "string") : [],
         // `settings.demo` 决定面板顶部的「这是演示账本」提示条；缺字段一律当假，
         // 免得在用户自己的真实账本上冒出一条莫名其妙的提示。
+        // 保单 / 到期提醒：面板的保单页与总看板提醒卡都靠它
+        policies: (() => {
+          const source = record.policies !== null && typeof record.policies === "object" ? record.policies : {};
+          const items = Array.isArray(source.items)
+            ? source.items
+                .filter((item) => item !== null && typeof item === "object")
+                .map((item) => ({
+                  id: String(item.id ?? ""),
+                  kind: POLICY_KINDS.includes(item.kind) ? item.kind : "other",
+                  name: String(item.name ?? ""),
+                  issuer: String(item.issuer ?? ""),
+                  type: String(item.type ?? ""),
+                  dueDate: String(item.dueDate ?? ""),
+                  amount: fen(item.amount),
+                  premium: fen(item.premium),
+                  payCycle: String(item.payCycle ?? ""),
+                  autoRenew: item.autoRenew === true,
+                  paidPeriods: num(item.paidPeriods, 0),
+                  totalPeriods: num(item.totalPeriods, 0),
+                  days: num(item.days, 0),
+                  bucket: ["overdue", "soon", "upcoming", "later"].includes(item.bucket) ? item.bucket : "later",
+                  action: String(item.action ?? "")
+                }))
+            : [];
+          return {
+            items,
+            all: Array.isArray(source.all)
+              ? source.all
+                  .filter((item) => item !== null && typeof item === "object")
+                  .map((item) => ({
+                    ...item,
+                    kind: POLICY_KINDS.includes(item.kind) ? item.kind : "other",
+                    amount: fen(item.amount),
+                    premium: fen(item.premium),
+                    rate: num(item.rate, 0),
+                    paidPeriods: num(item.paidPeriods, 0),
+                    totalPeriods: num(item.totalPeriods, 0)
+                  }))
+              : [],
+            overdue: num(source.overdue, 0),
+            soon: num(source.soon, 0),
+            totalPremium: fen(source.totalPremium),
+            totalAmount: fen(source.totalAmount)
+          };
+        })(),
         // 年度汇总：总看板的大数靠它，缺字段时给一个安全的零值
         yearly: (() => {
           const y = record.yearly !== null && typeof record.yearly === "object" ? record.yearly : {};
@@ -2159,6 +2237,546 @@ window.__ModuleLoader__.load({
       });
     }
 
+
+    // ── 保单 / 存款 / 理财 ────────────────────────────────────────────────
+    /**
+     * 保单编辑表单。
+     *
+     * 保险和存款理财共用一个表单，但字段按类型显隐：保险问「保额、保费、
+     * 续保日」，存款问「本金、利率、到期日」。让用户看着一堆无关字段填表
+     * 是最劝退的体验，所以按类型裁剪。
+     */
+    function PolicyForm({ record, onDone }) {
+      const isNew = record === null || record === undefined;
+      const [kind, setKind] = react.useState(record?.kind ?? "insurance");
+      const [name, setName] = react.useState(record?.name ?? "");
+      const [issuer, setIssuer] = react.useState(record?.issuer ?? "");
+      const [type, setType] = react.useState(record?.type ?? "critical");
+      const [amount, setAmount] = react.useState(isNew ? "" : yuanInput(record.amount ?? 0));
+      const [premium, setPremium] = react.useState(isNew ? "" : yuanInput(record.premium ?? 0));
+      const [rate, setRate] = react.useState(isNew ? "" : record.rate ? String(record.rate / 100) : "");
+      const [payCycle, setPayCycle] = react.useState(record?.payCycle ?? "yearly");
+      const [dueDate, setDueDate] = react.useState(record?.dueDate ?? "");
+      const [totalPeriods, setTotalPeriods] = react.useState(isNew ? "" : String(record.totalPeriods ?? ""));
+      const [note, setNote] = react.useState(record?.note ?? "");
+      const [busy, setBusy] = react.useState(false);
+      const insurance = kind === "insurance";
+      const submit = async () => {
+        if (name.trim() === "") {
+          complain(new Error(t("policy.name")));
+          return;
+        }
+        setBusy(true);
+        const payload = {
+          op: isNew ? "add" : "update",
+          ...(isNew ? {} : { id: record.id }),
+          kind,
+          name: name.trim(),
+          issuer: issuer.trim(),
+          type: insurance ? type : "",
+          amount: Math.abs(parseYuan(amount) ?? 0),
+          premium: insurance ? Math.abs(parseYuan(premium) ?? 0) : 0,
+          // 利率输入是百分数（3.5），存的是万分比（350）
+          rate: Math.round((Number(rate) || 0) * 100),
+          policyNo: record?.policyNo ?? "",
+          payCycle: insurance ? payCycle : "once",
+          dueDate: dueDate.trim(),
+          maturityDate: record?.maturityDate ?? "",
+          paidPeriods: record?.paidPeriods ?? 0,
+          totalPeriods: Number(totalPeriods) || 0,
+          autoRenew: record?.autoRenew === true,
+          note: note.trim()
+        };
+        try {
+          const saved = await writeSimple("/policies", payload, "toast.saved");
+          if (saved) onDone?.();
+        } finally {
+          setBusy(false);
+        }
+      };
+      const title = isNew ? t("policy.add") : t("policy.edit");
+      return jsx(Dialog, {
+        label: title,
+        onClose: onDone,
+        children: [
+          jsx("h3", { className: "dshfw-dialog__title", children: title }),
+          jsx("div", {
+            className: "dshfw-form",
+            children: [
+              jsx(Field, {
+                label: t("policy.kind"),
+                children: jsx(Select, {
+                  label: t("policy.kind"),
+                  value: kind,
+                  onChange: setKind,
+                  options: POLICY_KINDS.map((key) => ({ value: key, label: t(`policy.kind.${key}`) }))
+                })
+              }),
+              jsx(Field, { label: t("policy.name"), children: jsx(TextInput, { label: t("policy.name"), value: name, onChange: setName, placeholder: t("policy.namePlaceholder") }) }),
+              jsx(Field, { label: t("policy.issuer"), children: jsx(TextInput, { label: t("policy.issuer"), value: issuer, onChange: setIssuer, placeholder: t("policy.issuerPlaceholder") }) }),
+              insurance
+                ? jsx(Field, {
+                    label: t("policy.type"),
+                    children: jsx(Select, {
+                      label: t("policy.type"),
+                      value: type,
+                      onChange: setType,
+                      options: INSURANCE_TYPES.map((key) => ({ value: key, label: t(`policy.insurance.${key}`) }))
+                    })
+                  })
+                : null,
+              jsx(Field, {
+                label: insurance ? t("policy.coverage") : t("policy.principal"),
+                children: jsx(TextInput, { label: insurance ? t("policy.coverage") : t("policy.principal"), value: amount, onChange: setAmount, inputMode: "decimal", placeholder: "0.00" })
+              }),
+              insurance
+                ? jsx(Field, {
+                    label: t("policy.premium"),
+                    children: jsx(TextInput, { label: t("policy.premium"), value: premium, onChange: setPremium, inputMode: "decimal", placeholder: "0.00" })
+                  })
+                : jsx(Field, {
+                    label: t("policy.rate"),
+                    children: jsx(TextInput, { label: t("policy.rate"), value: rate, onChange: setRate, inputMode: "decimal", placeholder: "3.5" })
+                  }),
+              insurance
+                ? jsx(Field, {
+                    label: t("policy.payCycle"),
+                    children: jsx(Select, {
+                      label: t("policy.payCycle"),
+                      value: payCycle,
+                      onChange: setPayCycle,
+                      options: PAY_CYCLES.map((key) => ({ value: key, label: t(`policy.cycle.${key}`) }))
+                    })
+                  })
+                : null,
+              insurance
+                ? jsx(Field, { label: t("policy.totalPeriods"), children: jsx(TextInput, { label: t("policy.totalPeriods"), value: totalPeriods, onChange: setTotalPeriods, inputMode: "numeric", placeholder: "20" }) })
+                : null,
+              jsx(Field, {
+                label: insurance ? t("policy.renewDate") : t("policy.maturityDate"),
+                children: jsx(TextInput, { label: insurance ? t("policy.renewDate") : t("policy.maturityDate"), value: dueDate, onChange: setDueDate, placeholder: "2027-12-15" })
+              }),
+              jsx(Field, { label: t("policy.note"), children: jsx(TextInput, { label: t("policy.note"), value: note, onChange: setNote }) })
+            ]
+          }),
+          jsx("div", {
+            className: "dshfw-dialog__foot",
+            children: [jsx(Button, { tone: "ghost", onClick: onDone, children: t("action.cancel") }), jsx(Button, { tone: "primary", onClick: submit, disabled: busy, children: t("action.save") })]
+          })
+        ]
+      });
+    }
+
+    /**
+     * 总看板上的到期提醒（只显示 30 天内与已逾期的）。
+     *
+     * 这是全页唯一有「时效」的信息：保费过期会失去保障，存款到期不处理会
+     * 按活期计息。所以它排在年度大数之前，且用错误色标出已逾期项。
+     */
+    function PolicyAlert({ items }) {
+      const urgent = items.filter((item) => item.bucket === "overdue" || item.bucket === "soon");
+      if (urgent.length === 0) return null;
+      const overdue = urgent.filter((item) => item.bucket === "overdue").length;
+      return jsxs("div", {
+        className: "dshfw-alert",
+        children: [
+          jsxs("div", {
+            className: "dshfw-alert__head",
+            children: [
+              jsx(IconWarn, { size: 15 }),
+              jsx("span", { className: "dshfw-alert__title", children: t("policy.reminders") }),
+              overdue > 0
+                ? jsx("span", { className: "dshfw-alert__count", children: t("policy.overdueCount", { n: String(overdue) }) })
+                : null
+            ]
+          }),
+          jsx("div", {
+            className: "dshfw-alert__list",
+            children: urgent.slice(0, 4).map((item) =>
+              jsxs("div", {
+                key: item.id,
+                className: "dshfw-alert__item",
+                "data-tone": item.bucket,
+                children: [
+                  jsx("span", { className: "dshfw-alert__name", children: item.name }),
+                  jsx("span", {
+                    className: "dshfw-alert__when",
+                    children: item.days < 0
+                      ? t("policy.overdueDays", { n: String(Math.abs(item.days)) })
+                      : t("policy.leftDays", { n: String(item.days) })
+                  })
+                ]
+              })
+            )
+          })
+        ]
+      });
+    }
+
+    /** 到期提醒的一行：名称 + 日期 + 还剩几天。 */
+    function PolicyRow({ item, onEdit }) {
+      const days = item.days;
+      const tone = item.bucket === "overdue" ? "overdue" : item.bucket === "soon" ? "soon" : "later";
+      return jsxs("div", {
+        className: "dshfw-policy-row",
+        "data-tone": tone,
+        children: [
+          jsx("span", { className: "dshfw-policy-row__dot", "aria-hidden": "true" }),
+          jsx("div", {
+            className: "dshfw-policy-row__main",
+            children: [
+              jsx("span", { className: "dshfw-policy-row__name", children: item.name }),
+              jsxs("span", {
+                className: "dshfw-policy-row__meta",
+                children: [
+                  t(`policy.kind.${item.kind}`),
+                  item.issuer === "" ? null : ` · ${item.issuer}`,
+                  item.paidPeriods > 0 && item.totalPeriods > 0
+                    ? ` · ${t("policy.progress", { paid: String(item.paidPeriods), total: String(item.totalPeriods) })}`
+                    : null
+                ]
+              })
+            ]
+          }),
+          jsxs("div", {
+            className: "dshfw-policy-row__side",
+            children: [
+              jsx("span", { className: "dshfw-policy-row__date dshfw-num", children: item.dueDate }),
+              jsxs("span", {
+                className: "dshfw-policy-row__days dshfw-num",
+                children: [
+                  days < 0 ? t("policy.overdueDays", { n: String(Math.abs(days)) }) : t("policy.leftDays", { n: String(days) }),
+                  jsx("i", { children: item.action })
+                ]
+              })
+            ]
+          }),
+          jsx("span", { className: "dshfw-policy-row__amount dshfw-num", children: money(item.amount, { decimals: 0 }) }),
+          jsx(IconButton, { label: t("action.edit"), onClick: () => onEdit(item), children: jsx(IconChevronRight, { size: 13 }) })
+        ]
+      });
+    }
+
+
+    /**
+     * 上传保单识别对话框。
+     *
+     * 三步：选文件/粘贴文本 → 显示识别到的字段（可改）→ 确认入库。
+     *
+     * **识别在本机做**（Host 调本地 OCR），文件不上传。识别完的原文本也一并
+     * 给出来，用户能核对「它到底从哪儿读出的这些数」——保额差一个零是灾难，
+     * 必须让人有机会发现。
+     */
+    function PolicyScanDialog({ onClose, onSaved }) {
+      const [phase, setPhase] = react.useState("pick"); // pick | scanning | review | error
+      const [text, setText] = react.useState("");
+      const [fields, setFields] = react.useState(null);
+      const [rawText, setRawText] = react.useState("");
+      const [warnings, setWarnings] = react.useState([]);
+      const [failure, setFailure] = react.useState("");
+      const [busy, setBusy] = react.useState(false);
+      const [showRaw, setShowRaw] = react.useState(false);
+      // 与 PolicyForm 保持一致的编辑态（金额按元展示）
+      const [kind, setKind] = react.useState("insurance");
+      const [name, setName] = react.useState("");
+      const [issuer, setIssuer] = react.useState("");
+      const [type, setType] = react.useState("critical");
+      const [amount, setAmount] = react.useState("");
+      const [premium, setPremium] = react.useState("");
+      const [dueDate, setDueDate] = react.useState("");
+      const [policyNo, setPolicyNo] = react.useState("");
+      const [totalPeriods, setTotalPeriods] = react.useState("");
+
+      /** 把识别结果铺到可编辑状态上。 */
+      const adopt = (result) => {
+        const f = result?.fields ?? {};
+        setFields(f);
+        setRawText(String(result?.text ?? ""));
+        setWarnings(Array.isArray(result?.warnings) ? result.warnings : []);
+        setKind(POLICY_KINDS.includes(f.kind) ? f.kind : "insurance");
+        setName(String(f.name ?? ""));
+        setIssuer(String(f.issuer ?? ""));
+        setType(INSURANCE_TYPES.includes(f.type) ? f.type : "other");
+        setAmount(f.amount > 0 ? String(f.amount / 100) : "");
+        setPremium(f.premium > 0 ? String(f.premium / 100) : "");
+        setDueDate(String(f.dueDate ?? ""));
+        setPolicyNo(String(f.policyNo ?? ""));
+        setTotalPeriods(f.totalPeriods > 0 ? String(f.totalPeriods) : "");
+        setPhase("review");
+      };
+
+      const scan = async (payload) => {
+        setPhase("scanning");
+        setFailure("");
+        try {
+          const result = await postJson("/policies/scan", payload);
+          adopt(result);
+        } catch (error) {
+          setFailure(messageOf(error));
+          setPhase("error");
+        }
+      };
+
+      const onPick = async (event) => {
+        const file = event?.target?.files?.[0];
+        if (file === null || file === undefined) return;
+        setBusy(true);
+        try {
+          const base64 = await readBase64(file);
+          await scan({ name: file.name ?? "upload", content: base64 });
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const submit = async () => {
+        if (name.trim() === "") {
+          complain(new Error(t("policy.name")));
+          return;
+        }
+        setBusy(true);
+        try {
+          const saved = await writeSimple("/policies", {
+            op: "add",
+            kind,
+            name: name.trim(),
+            issuer: issuer.trim(),
+            type: kind === "insurance" ? type : "",
+            amount: Math.abs(parseYuan(amount) ?? 0),
+            premium: Math.abs(parseYuan(premium) ?? 0),
+            rate: 0,
+            policyNo: policyNo.trim(),
+            payCycle: kind === "insurance" ? "yearly" : "once",
+            dueDate: dueDate.trim(),
+            maturityDate: "",
+            paidPeriods: 0,
+            totalPeriods: Number(totalPeriods) || 0,
+            autoRenew: false,
+            note: ""
+          }, "toast.saved");
+          if (saved) {
+            onSaved?.();
+            onClose?.();
+          }
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      if (phase === "pick" || phase === "scanning" || phase === "error") {
+        return jsx(Dialog, {
+          label: t("policy.scan"),
+          onClose,
+          children: [
+            jsx("h3", { className: "dshfw-dialog__title", children: t("policy.scan") }),
+            jsxs("div", {
+              className: "dshfw-form dshfw-form--stack",
+              children: [
+                jsx("p", { className: "dshfw-muted", children: t("policy.scanHint") }),
+                jsx("input", {
+                  className: "dshfw-fileinput",
+                  type: "file",
+                  accept: ".pdf,.png,.jpg,.jpeg,.webp,.txt",
+                  "aria-label": t("policy.scanPick"),
+                  disabled: busy || phase === "scanning",
+                  onChange: (event) => void onPick(event)
+                }),
+                jsx("p", { className: "dshfw-muted", children: t("policy.scanOrPaste") }),
+                jsx("textarea", {
+                  className: "dshfw-textarea",
+                  rows: 5,
+                  value: text,
+                  "aria-label": t("policy.scanPaste"),
+                  placeholder: t("policy.scanPastePlaceholder"),
+                  onChange: (event) => setText(event?.target?.value ?? "")
+                }),
+                phase === "scanning"
+                  ? jsx("p", { className: "dshfw-muted", children: t("policy.scanning") })
+                  : null,
+                phase === "error"
+                  ? jsx("p", { className: "dshfw-error__text", children: failure })
+                  : null
+              ]
+            }),
+            jsx("div", {
+              className: "dshfw-dialog__foot",
+              children: [
+                jsx(Button, { tone: "ghost", onClick: onClose, children: t("action.cancel") }),
+                jsx(Button, {
+                  tone: "primary",
+                  disabled: busy || phase === "scanning" || text.trim() === "",
+                  onClick: () => void scan({ name: "pasted.txt", text }),
+                  children: t("policy.scanText")
+                })
+              ]
+            })
+          ]
+        });
+      }
+
+      // review：识别结果可改，原文可展开核对
+      return jsx(Dialog, {
+        label: t("policy.scanReview"),
+        onClose,
+        children: [
+          jsx("h3", { className: "dshfw-dialog__title", children: t("policy.scanReview") }),
+          warnings.length > 0
+            ? jsx("p", { className: "dshfw-muted", children: warnings.join(" ") })
+            : null,
+          jsx("div", {
+            className: "dshfw-form dshfw-form--stack",
+            children: [
+              jsx(Field, {
+                label: t("policy.kind"),
+                children: jsx(Select, {
+                  label: t("policy.kind"),
+                  value: kind,
+                  onChange: setKind,
+                  options: POLICY_KINDS.map((key) => ({ value: key, label: t(`policy.kind.${key}`) }))
+                })
+              }),
+              jsx(Field, { label: t("policy.name"), children: jsx(TextInput, { label: t("policy.name"), value: name, onChange: setName }) }),
+              jsx(Field, { label: t("policy.issuer"), children: jsx(TextInput, { label: t("policy.issuer"), value: issuer, onChange: setIssuer }) }),
+              jsx(Field, {
+                label: kind === "insurance" ? t("policy.coverage") : t("policy.principal"),
+                children: jsx(TextInput, { label: kind === "insurance" ? t("policy.coverage") : t("policy.principal"), value: amount, onChange: setAmount, inputMode: "decimal" })
+              }),
+              jsx(Field, { label: t("policy.premium"), children: jsx(TextInput, { label: t("policy.premium"), value: premium, onChange: setPremium, inputMode: "decimal" }) }),
+              jsx(Field, { label: t("policy.policyNo"), children: jsx(TextInput, { label: t("policy.policyNo"), value: policyNo, onChange: setPolicyNo }) }),
+              jsx(Field, {
+                label: kind === "insurance" ? t("policy.renewDate") : t("policy.maturityDate"),
+                children: jsx(TextInput, { label: kind === "insurance" ? t("policy.renewDate") : t("policy.maturityDate"), value: dueDate, onChange: setDueDate, placeholder: "2027-12-15" })
+              }),
+              jsx(Field, { label: t("policy.totalPeriods"), children: jsx(TextInput, { label: t("policy.totalPeriods"), value: totalPeriods, onChange: setTotalPeriods, inputMode: "numeric" }) }),
+              jsx("button", {
+                type: "button",
+                className: "dshfw-linkbtn",
+                onClick: () => setShowRaw((open) => !open),
+                children: showRaw ? t("policy.scanHideRaw") : t("policy.scanShowRaw")
+              }),
+              showRaw
+                ? jsx("pre", { className: "dshfw-rawtext", children: rawText || t("policy.scanNoText") })
+                : null
+            ]
+          }),
+          jsx("div", {
+            className: "dshfw-dialog__foot",
+            children: [
+              jsx(Button, { tone: "ghost", onClick: onClose, children: t("action.cancel") }),
+              jsx(Button, { tone: "primary", onClick: submit, disabled: busy, children: t("action.save") })
+            ]
+          })
+        ]
+      });
+    }
+
+    /** 保单管理页：到期提醒在前，全部保单在后。 */
+    function PolicyPage({ snapshot }) {
+      const [form, setForm] = react.useState(null);
+      const [scanning, setScanning] = react.useState(false);
+      const policies = snapshot.policies ?? { items: [], all: [], overdue: 0, soon: 0, totalPremium: 0, totalAmount: 0 };
+      const reminders = policies.items;
+      const grouped = { insurance: [], deposit: [], wealth: [], other: [] };
+      for (const policy of policies.all) {
+        const bucket = grouped[policy.kind] ?? grouped.other;
+        bucket.push(policy);
+      }
+      const remove = (id) => void writeSimple("/policies", { op: "remove", id }, "toast.removed");
+      return [
+        // ① 到期/续保提醒
+        jsx(Card, {
+          title: t("policy.reminders"),
+          sub: t("policy.remindersSub"),
+          actions: jsxs("div", {
+            className: "dshfw-card__actions",
+            children: [
+              jsx(Button, { tone: "outline", size: "sm", icon: jsx(IconUpload, { size: 13 }), onClick: () => setScanning(true), label: t("policy.scan"), children: t("policy.scan") }),
+              jsx(Button, { tone: "outline", size: "sm", icon: jsx(IconPlus, { size: 13 }), onClick: () => setForm({ record: null }), label: t("policy.add"), children: t("policy.add") })
+            ]
+          }),
+          children:
+            reminders.length === 0
+              ? jsx("p", { className: "dshfw-muted", children: t("policy.noReminders") })
+              : jsx("div", {
+                  className: "dshfw-policy-list",
+                  children: reminders
+                    .filter((item) => item.bucket !== "later")
+                    .concat(reminders.filter((item) => item.bucket === "later"))
+                    .map((item) =>
+                      jsx(PolicyRow, {
+                        key: item.id,
+                        item,
+                        onEdit: () => setForm({ record: policies.all.find((p) => p.id === item.id) ?? null })
+                      })
+                    )
+                })
+        }),
+        // ② 汇总
+        jsx("div", {
+          className: "dshfw-grid dshfw-grid--2",
+          children: [
+            jsx(Card, {
+              title: t("policy.summary"),
+              children: jsxs("div", {
+                className: "dshfw-policy-sum",
+                children: [
+                  jsx(Metric, { label: t("policy.totalPremium"), value: money(policies.totalPremium, { decimals: 0 }) }),
+                  jsx(Metric, { label: t("policy.totalAmount"), value: money(policies.totalAmount, { decimals: 0 }) }),
+                  jsx(Metric, { label: t("policy.count"), value: String(policies.all.length) })
+                ]
+              })
+            }),
+            jsx(Card, {
+              title: t("policy.byKind"),
+              children: jsxs("div", {
+                className: "dshfw-policy-sum",
+                children: POLICY_KINDS.filter((key) => grouped[key].length > 0).map((key) =>
+                  jsx(Metric, { key, label: t(`policy.kind.${key}`), value: t("policy.items", { n: String(grouped[key].length) }) })
+                )
+              })
+            })
+          ]
+        }),
+        // ③ 全部保单
+        ...POLICY_KINDS.filter((key) => grouped[key].length > 0).map((key) =>
+          jsx(Card, {
+            title: t(`policy.kind.${key}`),
+            children: jsx("div", {
+              className: "dshfw-policy-list",
+              children: grouped[key].map((policy) =>
+                jsxs("div", {
+                  className: "dshfw-policy-row",
+                  "data-tone": "plain",
+                  children: [
+                    jsx("span", { className: "dshfw-policy-row__dot", "aria-hidden": "true" }),
+                    jsx("div", {
+                      className: "dshfw-policy-row__main",
+                      children: [
+                        jsx("span", { className: "dshfw-policy-row__name", children: policy.name }),
+                        jsxs("span", {
+                          className: "dshfw-policy-row__meta",
+                          children: [
+                            policy.issuer === "" ? "" : `${policy.issuer} · `,
+                            policy.kind === "insurance" ? t(`policy.insurance.${policy.type}`) : t(`policy.cycle.${policy.payCycle}`),
+                            policy.dueDate === "" ? "" : ` · ${policy.dueDate}`
+                          ]
+                        })
+                      ]
+                    }),
+                    jsx("span", { className: "dshfw-policy-row__amount dshfw-num", children: money(policy.kind === "insurance" ? policy.premium : policy.amount, { decimals: 0 }) }),
+                    jsx(IconButton, { label: t("action.edit"), onClick: () => setForm({ record: policy }), children: jsx(IconChevronRight, { size: 13 }) }),
+                    jsx(IconButton, { label: t("action.delete"), onClick: () => remove(policy.id), children: jsx(IconClose, { size: 13 }) })
+                  ]
+                })
+              )
+            })
+          }, key)
+        ),
+        form === null ? null : jsx(PolicyForm, { record: form.record, onDone: () => setForm(null) }),
+        scanning ? jsx(PolicyScanDialog, { onClose: () => setScanning(false), onSaved: () => setScanning(false) }) : null
+      ];
+    }
+
     /** Net worth, composition, trend, then the two lists. */
     function AssetsPage({ snapshot }) {
       const [form, setForm] = react.useState(null);
@@ -3058,6 +3676,13 @@ window.__ModuleLoader__.load({
       return jsxs("div", {
         className: "dshfw-board",
         children: [
+          // ⓪ 到期/续保提醒：保费逾期会失效、存款到期不处理会损失利息，
+          //    这是唯一「有时效性」的信息，放在最上面。
+          (snapshot.policies?.items ?? []).some((item) => item.bucket === "overdue" || item.bucket === "soon")
+            ? jsx(Card, {
+                children: jsx(PolicyAlert, { items: snapshot.policies.items })
+              })
+            : null,
           // ① 年度的两个大数
           jsxs("section", {
             className: "dshfw-board__hero",
@@ -3232,17 +3857,58 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = react.useState(false);
       const [error, setError] = react.useState(null);
       const inputRef = react.useRef(null);
+      // 这句话会被记成什么：流水 / 保单 / 持仓 / 资产。
+      // 关键词判断是本地即时完成的，用户一输入就知道结果，不用等网络。
+      const kind = react.useMemo(() => detectQuickKind(text), [text]);
       const parsed = react.useMemo(() => (text.trim() === "" ? null : parseQuickEntry(text)), [text]);
+
+      /**
+       * 非流水的建档：把整句交给 Host 解析，再直接入库。
+       *
+       * 用户按下回车就是「记下来」的意思，所以预览与入库一次完成；
+       * 解析失败（认不出金额/日期）就把原因写在输入框旁边，不静默丢句子。
+       */
+      const submitEntity = async () => {
+        const handled = await postJson("/parse", { text });
+        if (handled === null || typeof handled !== "object" || handled.value === null || handled.value === undefined) {
+          setError(t("quick.unparsed"));
+          return false;
+        }
+        const intent = handled.intent;
+        const value = handled.value;
+        const saved = await postJson("/parse/commit", { intent, value, month: state.month });
+        if (saved?.snapshot !== undefined) setState({ snapshot: normalizeSnapshot(saved.snapshot) });
+        await reload();
+        notify(
+          t(
+            intent === "policy" ? "quick.savedPolicy" : intent === "holding" ? "quick.savedHolding" : "quick.savedAsset",
+            { name: String(value.name ?? "") }
+          )
+        );
+        return true;
+      };
+
       const submit = async () => {
         if (busy) return;
-        const draft = parseQuickEntry(text);
-        if (draft === null) {
-          setError(t("quick.unparsed"));
-          return;
-        }
         setBusy(true);
         setError(null);
         try {
+          // 非流水（保单/持仓/资产）：交给 Host 解析并入库
+          if (kind !== "txn") {
+            const ok = await submitEntity();
+            if (ok) {
+              setText("");
+              if (typeof onDone === "function") onDone(kind === "policy" ? "plan" : "assets");
+            } else {
+              setError(t("quick.unparsed"));
+            }
+            return;
+          }
+          const draft = parseQuickEntry(text);
+          if (draft === null) {
+            setError(t("quick.unparsed"));
+            return;
+          }
           // 金额走「分」（和 TxnEditor 一致）；分类/目的留空，交给 Host 的规则引擎
           // 按商户名归类——这样「35 咖啡」能自动落进「餐饮 / 生活必须」。
           const ok = await saveTxn({
@@ -3272,6 +3938,19 @@ window.__ModuleLoader__.load({
           void submit();
         }
       };
+      // 提示行：非流水显示「识别为保单，回车录入」；流水显示金额预览
+      const hint =
+        text.trim() === ""
+          ? null
+          : kind === "txn"
+            ? (parsed === null ? null : t("quick.preview", {
+                amount: money(Math.round(parsed.amount * 100), { decimals: 2 }),
+                merchant: parsed.merchant,
+                date: parsed.date.slice(5)
+              }))
+            : t(
+                kind === "policy" ? "quick.kindPolicy" : kind === "holding" ? "quick.kindHolding" : "quick.kindAsset"
+              );
       return jsx("div", {
         className: "dshfw-quick",
         "data-busy": busy ? "true" : undefined,
@@ -3290,20 +3969,24 @@ window.__ModuleLoader__.load({
             },
             onKeyDown: keyDown
           }),
-          parsed === null
-            ? error === null
+          error !== null
+            ? jsx("span", { className: "dshfw-quick__hint is-error", role: "status", children: error })
+            : hint === null
               ? null
-              : jsx("span", { className: "dshfw-quick__hint is-error", role: "status", children: error })
-            : jsx("span", {
-                className: "dshfw-quick__hint",
-                "data-direction": parsed.direction,
-                children: t("quick.preview", {
-                  amount: money(Math.round(parsed.amount * 100), { decimals: 2 }),
-                  merchant: parsed.merchant,
-                  date: parsed.date.slice(5)
-                })
-              }),
-          jsx(Button, { tone: parsed === null ? "outline" : "primary", size: "sm", onClick: () => void submit(), disabled: busy, label: t("quick.submit"), children: busy ? t("quick.busy") : t("quick.submit") })
+              : jsx("span", {
+                  className: "dshfw-quick__hint",
+                  "data-direction": kind === "txn" ? parsed?.direction : undefined,
+                  "data-kind": kind,
+                  children: hint
+                }),
+          jsx(Button, {
+            tone: kind === "txn" && parsed === null ? "outline" : "primary",
+            size: "sm",
+            onClick: () => void submit(),
+            disabled: busy,
+            label: t("quick.submit"),
+            children: busy ? t("quick.busy") : t("quick.submit")
+          })
         ]
       });
     }
@@ -3375,6 +4058,7 @@ window.__ModuleLoader__.load({
           board: [jsx(DashboardPage, { snapshot, onFilter })],
           flow: [jsx(StatStrip, { snapshot }), jsx("div", { className: "dshfw-grid dshfw-grid--2", children: [jsx(FlowTrend, { snapshot }), jsx(Card, { title: t("flow.top"), children: jsx(TopExpenses, { snapshot, onPick: onFilter }) })] }), jsx(FlowOverview, { snapshot, filter: state.filterCategory, onFilter }), jsx(FlowList, { snapshot })],
           assets: [jsx(AssetsPage, { snapshot })],
+          policy: [jsx(PolicyPage, { snapshot })],
           invest: [jsx(InvestPage, { snapshot })],
           plan: [jsx(PlanPage, { snapshot, insight: state.insight })]
         };
@@ -3403,7 +4087,9 @@ window.__ModuleLoader__.load({
             })
           }),
           state.toast === null ? null : jsx("div", { className: "dshfw-toast", role: "status", children: state.toast.message }),
-          jsx(QuickEntry, { onDone: () => setState({ tab: "flow" }) }),
+          jsx(QuickEntry, {
+            onDone: (target) => setState({ tab: TABS.includes(target) ? target : "flow" })
+          }),
           jsx(ImportWizard, { wizard: state.wizard, onClose: closeWizard })
         ]
       });
@@ -3631,6 +4317,13 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 
 /* ── forms ──────────────────────────────────────────────────────────── */
 .dshfw-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px 12px;width:100%}
+/* 单列表单：上传/识别这类「一列读下来」的流程用，避免字段被拆成两栏 */
+.dshfw-form--stack{grid-template-columns:minmax(0,1fr)}
+/* 可见的文件选择框（与导入向导里那个隐藏 input + 自绘按钮不同，
+   这里是简单场景，直接用原生 input 并给它一副边框） */
+.dshfw-fileinput{width:100%;padding:10px 12px;border:.5px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-secondary);font-size:12.5px;cursor:pointer}
+.dshfw-fileinput:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}
+.dshfw-fileinput::file-selector-button{margin-right:10px;padding:5px 12px;border:none;border-radius:7px;background:var(--dshfw-accent);color:#fff;font-size:12.5px;font-family:inherit;cursor:pointer}
 .dshfw-form--single{grid-template-columns:minmax(0,1fr)}
 .dshfw-form__foot{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;padding-top:2px}
 .dshfw-field{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -3734,10 +4427,10 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 
 /* ── dialogs & wizard ───────────────────────────────────────────────── */
 .dshfw-scrim{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:6vh 16px 32px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 32%,transparent);animation:dshfw-fadein .14s ease-out}
-.dshfw-dialog{width:min(520px,100%);display:flex;flex-direction:column;gap:14px;padding:18px 20px 16px;border-radius:16px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent,0 18px 48px rgba(0,0,0,.28));animation:dshfw-pop .16s ease-out}
+.dshfw-dialog{width:min(520px,100%);max-height:88vh;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:18px 20px 16px;border-radius:16px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent,0 18px 48px rgba(0,0,0,.28));animation:dshfw-pop .16s ease-out}
 .dshfw-dialog--wide{width:min(860px,100%)}
 .dshfw-dialog__title{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
-.dshfw-dialog__foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:2px}
+.dshfw-dialog__foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:2px;position:sticky;bottom:-16px;margin-bottom:-16px;padding:12px 0 14px;background:var(--dsw-alias-bg-layer-1);border-top:.5px solid var(--dsw-alias-border-l2);z-index:1}
 .dshfw-wizard__head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .dshfw-steps{list-style:none;margin:0;padding:0;display:flex;gap:4px;align-items:center}
 .dshfw-steps__item{display:inline-flex;align-items:center;gap:6px;padding:0 4px;font-size:12px;color:var(--dsw-alias-label-tertiary)}
@@ -3867,6 +4560,47 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-budgetbar[data-over="true"] .dshfw-budgetbar__pct{color:var(--dsw-alias-state-error-primary);font-weight:600}
 .dshfw-budgetbar__note{margin:0;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
 .dshfw-trend__yearly{margin:2px 0 0;font-size:11.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+
+/* ── 保单 / 到期提醒 ──────────────────────────────────────────────────── */
+.dshfw-policy-list{display:flex;flex-direction:column;gap:2px}
+.dshfw-policy-row{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.dshfw-policy-row:last-child{border-bottom:none}
+.dshfw-policy-row__dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dshfw-policy-row[data-tone="overdue"] .dshfw-policy-row__dot{background:var(--dsw-alias-state-error-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-error-primary) 20%,transparent)}
+.dshfw-policy-row[data-tone="soon"] .dshfw-policy-row__dot{background:var(--dshfw-c0);box-shadow:0 0 0 3px color-mix(in srgb,var(--dshfw-c0) 20%,transparent)}
+.dshfw-policy-row[data-tone="later"] .dshfw-policy-row__dot{background:var(--dsw-alias-label-secondary)}
+.dshfw-policy-row__main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.dshfw-policy-row__name{font-size:13.5px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshfw-policy-row__meta{font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.dshfw-policy-row__side{flex:none;display:flex;flex-direction:column;gap:2px;align-items:flex-end;text-align:right}
+.dshfw-policy-row__date{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshfw-policy-row__days{font-size:11.5px;color:var(--dsw-alias-label-tertiary);display:flex;gap:6px;align-items:baseline}
+.dshfw-policy-row__days i{font-style:normal;color:var(--dsw-alias-label-tertiary);font-size:11px}
+.dshfw-policy-row[data-tone="overdue"] .dshfw-policy-row__days{color:var(--dsw-alias-state-error-primary);font-weight:600}
+.dshfw-policy-row[data-tone="soon"] .dshfw-policy-row__days{color:var(--dshfw-c0);font-weight:600}
+.dshfw-policy-row__amount{flex:none;min-width:88px;text-align:right;font-size:13px;color:var(--dsw-alias-label-primary)}
+.dshfw-policy-sum{display:flex;flex-direction:column;gap:14px;padding:4px 0}
+
+/* 总看板上的到期提醒卡 */
+.dshfw-alert{display:flex;flex-direction:column;gap:10px}
+.dshfw-alert__head{display:flex;align-items:baseline;gap:8px}
+.dshfw-alert__title{font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dshfw-alert__count{font-size:12px;color:var(--dsw-alias-state-error-primary);font-weight:600}
+.dshfw-alert__list{display:flex;flex-direction:column;gap:8px}
+.dshfw-alert__item{display:flex;align-items:center;gap:10px;font-size:12.5px}
+.dshfw-alert__name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}
+.dshfw-alert__when{flex:none;font-size:12px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.dshfw-alert__item[data-tone="overdue"] .dshfw-alert__when{color:var(--dsw-alias-state-error-primary);font-weight:600}
+
+
+/* ── 保单扫描 ─────────────────────────────────────────────────────────── */
+.dshfw-textarea{width:100%;min-height:96px;padding:10px 12px;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-specific-input-major,var(--dsw-alias-bg-base));color:var(--dsw-alias-label-primary);font-family:${FONT_UI};font-size:13px;line-height:1.6;resize:vertical}
+.dshfw-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 3px var(--dsw-focus-ring-color,rgba(13,148,136,.18))}
+.dshfw-linkbtn{align-self:flex-start;padding:0;border:none;background:none;color:var(--dsw-alias-brand-primary);font-size:12.5px;cursor:pointer}
+.dshfw-linkbtn:hover{text-decoration:underline}
+.dshfw-rawtext{max-height:220px;overflow:auto;margin:0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent);font-family:${FONT_NUM};font-size:11.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}
+.dshfw-card__actions{display:flex;gap:8px}
+
 /* ── motion ─────────────────────────────────────────────────────────── */
 /* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来
    （被禁用、被容器裁剪、或渲染器提前截图），内容会永久停在 opacity:0 上。 */

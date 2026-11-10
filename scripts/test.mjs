@@ -242,7 +242,8 @@ const shift = (month, delta) => {
 /** Contract dedupe key. */
 const dedupeKey = (row) => `${String(row.date)}|${String(Math.abs(row.amount))}|${row.direction}|${String(row.merchant ?? "").toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "")}`;
 
-const emptyLedger = () => ({ txns: [], assets: [], liabilities: [], holdings: [], budgets: [], goals: [] });
+const emptyLedger = () => ({
+  policies: [], txns: [], assets: [], liabilities: [], holdings: [], budgets: [], goals: [] });
 
 /**
  * A realistic November 2026 ledger: ¥24,996 income, ¥7,096 spent, three
@@ -395,6 +396,7 @@ const snapshotOf = (ledger, month, now) => {
     tips,
     monthsAvailable,
     dataNotes: [],
+    policies: snapshotPolicies(ledger),
     yearly: {
       year: month.slice(0, 4),
       income,
@@ -408,6 +410,34 @@ const snapshotOf = (ledger, month, now) => {
     // The real Host passes its settings through (the panel reads `demo` from it),
     // so the stand-in must as well.
     settings: { currency: "CNY", emergencyMonths: 6, ...(ledger.settings ?? {}) }
+  };
+};
+
+/** 保单快照：与真 Host 的 buildPolicyReminders 同口径。 */
+const snapshotPolicies = (ledger) => {
+  const list = Array.isArray(ledger.policies) ? ledger.policies : [];
+  const today = "2026-11-08";
+  const items = list
+    .filter((policy) => /^\d{4}-\d{2}-\d{2}$/.test(policy.dueDate ?? ""))
+    .map((policy) => {
+      const days = Math.round((Date.parse(policy.dueDate) - Date.parse(today)) / 86400000);
+      const bucket = days < 0 ? "overdue" : days <= 30 ? "soon" : days <= 90 ? "upcoming" : "later";
+      return {
+        ...policy,
+        days,
+        bucket,
+        action: policy.kind === "insurance" ? "需要续保/缴费" : "到期需处理"
+      };
+    })
+    .sort((a, b) => a.days - b.days);
+  return {
+    items,
+    overdue: items.filter((item) => item.bucket === "overdue").length,
+    soon: items.filter((item) => item.bucket === "soon").length,
+    next: items[0] ?? null,
+    all: list,
+    totalPremium: list.filter((p) => p.kind === "insurance").reduce((acc, p) => acc + (p.premium ?? 0), 0),
+    totalAmount: list.reduce((acc, p) => acc + (p.amount ?? 0), 0)
   };
 };
 
@@ -593,6 +623,67 @@ const fetchStub = async (url, init = {}) => {
     // plugin never re-seeds it behind the user's back.
     host.ledger = { ...sampleLedger(), txns: [], assets: [], liabilities: [], holdings: [], goals: [], budgets: [], settings: { currency: "CNY", emergencyMonths: 6, demo: false, demoOffered: true } };
     return ok({ demo: false, snapshot: snapshotOf(host.ledger, "2026-11", clock.now) });
+  }
+  if (path === `${API}/capabilities` && method === "GET") {
+    return ok({ scan: { ocr: true, pdf: true } });
+  }
+  if (path === `${API}/policies/scan` && method === "POST") {
+    // 替身：不管传文件还是文本，都返回一份固定的识别结果
+    return ok({
+      kind: "insurance",
+      source: body.text ? "text" : "file",
+      text: "中国平安人寿保险股份有限公司\n保单号 P2026110800123\n险种名称 平安福重大疾病保险\n基本保险金额 (500,000元)\n年交保费 (4,860元)\n保险费应交日 每年12月15日",
+      fields: {
+        kind: "insurance",
+        name: "平安福重大疾病保险",
+        issuer: "中国平安人寿保险股份有限公司",
+        type: "critical",
+        amount: 50_000_000,
+        premium: 486_000,
+        rate: 0,
+        policyNo: "P2026110800123",
+        payCycle: "yearly",
+        dueDate: "2026-12-15",
+        maturityDate: "",
+        totalPeriods: 20,
+        confidence: {}
+      },
+      warnings: [],
+      capability: { ocr: true, pdf: true }
+    });
+  }
+  if (path === `${API}/policies` && method === "POST") {
+    const { op } = body;
+    if (op === "remove") {
+      host.ledger.policies = (host.ledger.policies ?? []).filter((policy) => policy.id !== body.id);
+    } else if (op === "add") {
+      host.ledger.policies = [...(host.ledger.policies ?? []), { id: nextId("pol"), ...body }];
+    } else {
+      host.ledger.policies = (host.ledger.policies ?? []).map((policy) => (policy.id === body.id ? { ...policy, ...body } : policy));
+    }
+    return ok({ item: null, snapshot: snapshotOf(host.ledger, "2026-11", clock.now) });
+  }
+  if (path === `${API}/parse` && method === "POST") {
+    // 面板把整句交给 Host 解析；这里替身用同样的关键词判断
+    const text = String(body.text ?? "");
+    // 与客户端 detectQuickKind 同口径：单独的「险」也算保单信号（重疾险）
+    if (/保险|保单|保费|保额|重疾|续保|存款|定期|理财|到期|年化|利率|险/u.test(text)) {
+      return ok({ intent: "policy", value: { kind: "insurance", name: "平安重疾险", premium: 486000, dueDate: "2027-12-15" } });
+    }
+    if (/股|基金/u.test(text)) {
+      return ok({ intent: "holding", value: { name: "招商银行", type: "stock", shares: 1000, costPrice: 3450, price: 3800 } });
+    }
+    if (/活期|余额|房产/u.test(text)) {
+      return ok({ intent: "asset", value: { name: "招行活期", kind: "cash", value: 18500000 } });
+    }
+    return ok({ intent: "txn", value: null });
+  }
+  if (path === `${API}/parse/commit` && method === "POST") {
+    const { intent, value } = body;
+    if (intent === "policy") host.ledger.policies = [...(host.ledger.policies ?? []), { id: nextId("pol"), ...value }];
+    else if (intent === "asset") host.ledger.assets = [...host.ledger.assets, { id: nextId("ast"), ...value }];
+    else if (intent === "holding") host.ledger.holdings = [...host.ledger.holdings, { id: nextId("hold"), ...value }];
+    return ok({ intent, item: value, snapshot: snapshotOf(host.ledger, "2026-11", clock.now) });
   }
   if (path === `${API}/export` && method === "GET") {
     return ok({ version: 1, ...host.ledger });
@@ -1602,6 +1693,143 @@ test("a ledger whose income clearly lags spending says so on the overview", asyn
   const { tree } = await open(undefined, { tab: "board" });
   // 样本账本收支正常 → 不该有警告
   assert.equal(byClass(tree, "dshfw-datanote").length, 0, "no warning when income and expense are proportionate");
+});
+
+
+test("the policies tab lists renewals with days remaining and flags overdue ones", async () => {
+  const ledger = sampleLedger();
+  ledger.policies = [
+    { id: "pol1", kind: "insurance", name: "平安重疾险", issuer: "平安保险", type: "critical", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20", paidPeriods: 3, totalPeriods: 20 },
+    { id: "pol2", kind: "deposit", name: "三年定期", issuer: "招商银行", amount: 10_000_000, rate: 350, payCycle: "once", dueDate: "2027-03-01" },
+  ];
+  const { ui, tree: flowTree } = await open(() => ledger);
+  press(flowTree, "保单");
+  const tree = await settlePage(ui);
+  const text = textOf(tree);
+  assert.match(text, /平安重疾险/, "the insurance policy is listed");
+  assert.match(text, /三年定期/, "the deposit is listed");
+  // 20 号距 11-08 还有 12 天
+  assert.match(text, /还剩 12 天/, "days remaining is shown");
+  const rows = byClass(tree, "dshfw-policy-row");
+  assert.ok(rows.length >= 2, "one row per policy");
+});
+
+test("an overdue renewal is flagged in the reminder list", async () => {
+  const ledger = sampleLedger();
+  ledger.policies = [
+    { id: "pol1", kind: "insurance", name: "百万医疗", amount: 30_000_000, premium: 120_000, payCycle: "yearly", dueDate: "2026-11-01" },
+  ];
+  const { ui, tree: flowTree } = await open(() => ledger);
+  press(flowTree, "保单");
+  const tree = await settlePage(ui);
+  assert.match(textOf(tree), /已逾期/, "overdue policy says so");
+  const overdue = byClass(tree, "dshfw-policy-row").filter((row) => row.props["data-tone"] === "overdue");
+  assert.equal(overdue.length, 1, "exactly one overdue row");
+});
+
+test("the overview surfaces a renewal that is due within 30 days", async () => {
+  const ledger = sampleLedger();
+  ledger.policies = [
+    { id: "pol1", kind: "insurance", name: "平安重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const alert = byClass(tree, "dshfw-alert")[0];
+  assert.ok(alert !== undefined, "the dashboard shows a renewal alert");
+  assert.match(textOf(alert), /平安重疾险/, "it names the policy");
+  assert.match(textOf(alert), /还剩 12 天/, "it shows how long is left");
+});
+
+test("a ledger with no urgent renewals shows no alert on the overview", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  assert.equal(byClass(tree, "dshfw-alert").length, 0, "no alert when nothing is due soon");
+});
+
+test("typing a policy sentence records a policy instead of a transaction", async () => {
+  const { ui, tree } = await open();
+  typeInto(tree, "随手记一笔", "平安重疾险每年4860明年12月续保");
+  let typed = await settlePage(ui);
+  // 输入框应立刻提示「识别为保单」，而不是显示金额预览
+  const hint = textOfClass(typed, "dshfw-quick__hint")[0] ?? "";
+  assert.match(hint, /保单/, `hint says it is a policy, got: ${hint}`);
+  press(typed, "记下");
+  typed = await flush(ui);
+  const parses = callsTo("/parse");
+  const commits = callsTo("/parse/commit");
+  assert.equal(parses.length, 1, "the sentence went to the parser");
+  assert.equal(commits.length, 1, "and was committed once");
+  assert.equal(commits[0].body.intent, "policy", "committed as a policy");
+  // 不能同时写成一笔流水
+  const txnWrites = callsTo("/txns").filter((call) => call.method !== "GET");
+  assert.equal(txnWrites.length, 0, "no transaction was written");
+});
+
+test("typing an asset sentence records an asset", async () => {
+  const { ui, tree } = await open();
+  typeInto(tree, "随手记一笔", "招行活期有18万5");
+  const typed = await settlePage(ui);
+  assert.match(textOfClass(typed, "dshfw-quick__hint")[0] ?? "", /资产/, "hint says it is an asset");
+  press(typed, "记下");
+  await flush(ui);
+  const commits = callsTo("/parse/commit");
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0].body.intent, "asset");
+});
+
+test("a plain expense sentence still writes a transaction", async () => {
+  const { ui, tree } = await open();
+  typeInto(tree, "随手记一笔", "35 咖啡");
+  const typed = await settlePage(ui);
+  assert.match(textOfClass(typed, "dshfw-quick__hint")[0] ?? "", /¥35\.00/, "hint shows the amount");
+  press(typed, "记下");
+  await flush(ui);
+  assert.equal(callsTo("/parse").length, 0, "a plain expense never hits the parser");
+  assert.equal(callsTo("/txns").filter((call) => call.method !== "GET").length, 1, "one transaction written");
+});
+
+
+test("uploading a policy file scans it and pre-fills the form for review", async () => {
+  const { ui, tree: flowTree } = await open();
+  press(flowTree, "保单");
+  const policyTree = await settlePage(ui);
+  // 保单页有「上传保单」入口
+  press(policyTree, "上传保单");
+  const dialogTree = await settlePage(ui);
+  // 粘贴文本 → 识别
+  typeInto(dialogTree, "保单文字", "保单号 P2026110800123 险种名称 平安福重大疾病保险");
+  const typedTree = await settlePage(ui);
+  press(typedTree, "识别这段文字");
+  const reviewTree = await flush(ui);
+  // 识别结果要填进表单（名称在输入框的 value 里，不是文本节点）
+  assert.equal(fieldNamed(reviewTree, "名称").props.value, "平安福重大疾病保险", "the product name is pre-filled");
+  assert.equal(fieldNamed(reviewTree, "保额").props.value, "500000", "coverage pre-filled in yuan");
+  assert.equal(fieldNamed(reviewTree, "保单号").props.value, "P2026110800123", "policy number pre-filled");
+  const scans = callsTo("/policies/scan");
+  assert.equal(scans.length, 1, "the scan route was called");
+  assert.ok(String(scans[0].body.text).includes("平安福"), "the pasted text was sent");
+  // 展开原文核对
+  press(reviewTree, "查看识别到的原文");
+  const rawTree = await settlePage(ui);
+  assert.match(textOf(rawTree), /P2026110800123/, "the recognised text is shown for verification");
+});
+
+test("saving a reviewed policy writes exactly one record", async () => {
+  const { ui, tree: flowTree } = await open();
+  press(flowTree, "保单");
+  const policyTree = await settlePage(ui);
+  press(policyTree, "上传保单");
+  const dialogTree = await settlePage(ui);
+  typeInto(dialogTree, "保单文字", "识别这段");
+  const typedTree = await settlePage(ui);
+  press(typedTree, "识别这段文字");
+  const reviewTree = await flush(ui);
+  press(reviewTree, "保存");
+  await flush(ui);
+  const writes = callsTo("/policies").filter((call) => call.method === "POST");
+  assert.equal(writes.length, 1, "one policy write");
+  assert.equal(writes[0].body.op, "add");
+  assert.equal(writes[0].body.name, "平安福重大疾病保险");
+  assert.equal(writes[0].body.amount, 50_000_000, "保额 50 万按分");
+  assert.equal(writes[0].body.premium, 486_000, "年缴保费 4860 按分");
 });
 
 test("a real ledger never shows the demo notice", async () => {

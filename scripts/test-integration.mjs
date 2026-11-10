@@ -6,7 +6,7 @@
  * 单测各自证明半边；这一个证明**接缝**：
  * 导入（支付宝 52 笔）→ 预览自动分类率 → 确认入库 → 三个数一致 →
  * 改一笔分类 → rules 记住 → 手动补记一笔现金 → snapshot 更新 →
- * 八个工具都能 execute → AI 不可用时 insight 降级为 rules。
+ * 九个工具都能 execute → AI 不可用时 insight 降级为 rules。
  *
  * 另外还覆盖：信任栅栏、预算/目标/资产负债/持仓、导出、备份恢复、
  * 示例数据只在空库上写入、AI 可用时 insight 走 ai。
@@ -294,7 +294,7 @@ test("八个工具都能 execute，且返回人话文本", async () => {
     cwd: tmp,
     now: () => new Date(2026, 10, 27, 12, 0, 0).getTime()
   });
-  assert.equal(definitions.length, 8, "八个工具");
+  assert.equal(definitions.length, 9, "九个工具");
   assert.deepEqual(
     definitions.map((tool) => tool.name),
     [...TOOL_NAMES],
@@ -399,7 +399,7 @@ test("工具失败不拖垮其他：坏参数返回人话，其余工具照常",
   assert.match(missing, /读不到/u);
 });
 
-test("registerTools 收集八个定义，单个注册失败不影响其余", async () => {
+test("registerTools 收集九个定义，单个注册失败不影响其余", async () => {
   const store = freshStore();
   const registered = [];
   const ctx = {
@@ -413,8 +413,8 @@ test("registerTools 收集八个定义，单个注册失败不影响其余", asy
   };
   const { registerTools } = await import("../lib/tools.js");
   const disposers = registerTools(ctx, { store, fs: null, cwd: tmp, log: () => {} });
-  assert.equal(registered.length, 7, "七个成功注册");
-  assert.equal(disposers.length, 7);
+  assert.equal(registered.length, 8, "九个里有一个撞名失败，其余八个成功");
+  assert.equal(disposers.length, 8);
   assert.ok(!registered.includes("finance_query_txns"));
   for (const dispose of disposers) dispose();
 });
@@ -727,4 +727,71 @@ test("导入的金额以分存储，展示时按元", async () => {
   const stored = store.getDb().txns.find((txn) => txn.date === first.date && txn.amount === first.amount);
   assert.ok(stored !== undefined, "按分精确保存");
   assert.equal(yuan(stored.amount), formatCents(stored.amount, { symbol: false }));
+});
+// ── 一句话录入与保单 ─────────────────────────────────────────────────────
+test("POST /parse 只解析不写库，面板据此给预览", async () => {
+  const t = mount();
+  try {
+    const before = t.store.getDb().policies?.length ?? 0;
+    const res = await t.call("POST", "/parse", { text: "平安重疾险，每年4860，明年12月15号续保" });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.value.intent, "policy");
+    assert.equal(res.body.value.value.premium, 486000);
+    assert.equal(res.body.value.value.dueDate, "2027-12-15");
+    assert.equal(t.store.getDb().policies?.length ?? 0, before, "解析不落库");
+  } finally {
+    t.dispose();
+  }
+});
+
+test("POST /parse/commit 把解析结果写进对应的表", async () => {
+  const t = mount();
+  try {
+    const policyRes = await t.call("POST", "/parse/commit", {
+      intent: "policy",
+      value: { kind: "deposit", name: "三年定期", amount: 10000000, rate: 350, dueDate: "2027-03-01", payCycle: "once" }
+    });
+    assert.equal(policyRes.status, 200);
+    assert.equal(policyRes.body.value.snapshot.policies.all.length, 1);
+    assert.equal(policyRes.body.value.snapshot.policies.items.length, 1, "设了日期就要进提醒");
+
+    const assetRes = await t.call("POST", "/parse/commit", {
+      intent: "asset",
+      value: { name: "招行活期", kind: "cash", value: 18500000 }
+    });
+    assert.equal(assetRes.body.value.snapshot.assets.items.length, 1, "资产写进 assets");
+
+    const bad = await t.call("POST", "/parse/commit", { intent: "nope", value: {} });
+    assert.equal(bad.status, 400);
+  } finally {
+    t.dispose();
+  }
+});
+
+test("保单接口：增删改，且到期提醒带天数与紧急度", async () => {
+  const t = mount();
+  try {
+    const created = await t.call("POST", "/policies", {
+      op: "add",
+      kind: "insurance",
+      name: "百万医疗",
+      amount: 30000000,
+      premium: 120000,
+      payCycle: "yearly",
+      dueDate: "2026-12-10"
+    });
+    assert.equal(created.status, 200);
+    const reminder = created.body.value.snapshot.policies.items[0];
+    assert.equal(reminder.name, "百万医疗");
+    assert.equal(reminder.bucket, "soon", "12-10 在 30 天内");
+    assert.ok(reminder.days > 0);
+
+    const removed = await t.call("POST", "/policies", {
+      op: "remove",
+      id: reminder.id
+    });
+    assert.equal(removed.body.value.snapshot.policies.all.length, 0);
+  } finally {
+    t.dispose();
+  }
 });

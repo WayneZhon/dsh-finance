@@ -24,6 +24,7 @@ import { createAiBridge } from "./lib/ai.js";
 import { createStore } from "./lib/store.js";
 import { registerRoutes } from "./lib/routes.js";
 import { registerTools } from "./lib/tools.js";
+import { scanPolicyFile } from "./lib/policy-scan.js";
 
 /** 插件身份（cordis 行与诊断用）。 */
 export const name = "@wayne/dsh-finance";
@@ -97,6 +98,8 @@ export function apply(ctx, config = {}) {
   const toolDeps = () => ({
     store,
     ai,
+    // 保单附件识别（本地 OCR）：工具与路由共用同一个实现
+    scanPolicyFile: (file) => scanPolicyFile(file),
     fs: serviceOf(ctx, "fs"),
     cwd: workingDirectoryOf(ctx),
     log,
