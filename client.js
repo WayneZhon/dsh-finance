@@ -392,7 +392,13 @@ window.__ModuleLoader__.load({
         merchant: typeof raw.merchant === "string" ? raw.merchant : "",
         note: typeof raw.note === "string" ? raw.note : "",
         source: raw.source === "manual" || raw.source === "agent" ? raw.source : "import",
-        money: raw.money === true
+        money: raw.money === true,
+        // 支付渠道与精确时间：用于在流水上标注「这笔走的哪张卡」，
+        // 也是跨账单去重的依据（Host 已经做完去重，这里只用于展示）。
+        time: typeof raw.time === "string" ? raw.time : "",
+        channel: typeof raw.channel === "string" ? raw.channel : "",
+        channelKind: typeof raw.channelKind === "string" ? raw.channelKind : "",
+        channelLabel: typeof raw.channelLabel === "string" ? raw.channelLabel : ""
       };
     };
     /** `[{category, amount, share, count}]`. */
@@ -1812,7 +1818,8 @@ window.__ModuleLoader__.load({
               children: [jsx("i", { className: "dshfw-dot", style: { background: colorVar(colorIndexOf(txn.category)) } }), txn.category]
             })
           }),
-          jsx("td", { className: "dshfw-row__account", children: txn.account }),
+          // 账户列优先显示识别出的渠道（「招商银行信用卡(5678)」比空白更有用）
+          jsx("td", { className: "dshfw-row__account", title: txn.account || txn.channelLabel, children: txn.channelLabel || txn.account || "—" }),
           jsx("td", {
             className: `dshfw-row__amount dshfw-num${txn.direction === "income" ? " is-income" : ""}`,
             children: `${txn.direction === "income" ? "+" : "−"}${money(txn.amount)}`
