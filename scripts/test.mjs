@@ -301,7 +301,8 @@ const snapshotOf = (ledger, month, now) => {
   const byCategory = [...byCategoryMap.entries()]
     .map(([category, entry]) => ({ category, amount: entry.amount, share: expense > 0 ? entry.amount / expense : 0, count: entry.count }))
     .sort((a, b) => b.amount - a.amount);
-  const trend = [-5, -4, -3, -2, -1, 0].map((delta) => {
+  // 与真 Host 同口径：趋势覆盖最近 12 个月（柱状图铺满一整年）
+  const trend = [-11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0].map((delta) => {
     const key = shift(month, delta);
     const list = ledger.txns.filter((txn) => monthOf(txn.date) === key);
     const inc = sum(list.filter((txn) => txn.direction === "income"));
@@ -393,6 +394,16 @@ const snapshotOf = (ledger, month, now) => {
     goals,
     tips,
     monthsAvailable,
+    yearly: {
+      year: month.slice(0, 4),
+      income,
+      expense,
+      balance: income - expense,
+      months: new Set(ledger.txns.map((txn) => monthOf(txn.date))).size,
+      avgExpense: expense,
+      avgIncome: income,
+      txnCount: ledger.txns.length
+    },
     // The real Host passes its settings through (the panel reads `demo` from it),
     // so the stand-in must as well.
     settings: { currency: "CNY", emergencyMonths: 6, ...(ledger.settings ?? {}) }
@@ -993,12 +1004,28 @@ const flush = async (ui) => {
   return tree;
 };
 /** Seed a ledger, mount a fresh page, and return it settled. */
-const open = async (ledger) => {
+/**
+ * Mount the panel on a fresh ledger.
+ *
+ * The panel opens on the Overview tab (it is the first page and answers
+ * "how did this year go" without a click). Most of the suite exercises the
+ * cash-flow page, so `open` lands there by default; pass `{ tab: "board" }`
+ * to test the overview itself.
+ *
+ * @param {object | (() => object)} [ledger] a ledger to seed
+ * @param {{ tab?: string }} [options] the tab to select after mount
+ */
+const open = async (ledger, options = {}) => {
   // A fresh sample ledger per open: tests write to the Host (add, delete,
   // import), so a shared ledger object would leak rows into the next test.
   host.reset(ledger === undefined ? sampleLedger() : typeof ledger === "function" ? ledger() : JSON.parse(JSON.stringify(ledger)));
   const ui = fresh();
-  const tree = await settlePage(ui);
+  let tree = await settlePage(ui);
+  const wanted = options.tab ?? "flow";
+  if (wanted !== "board") {
+    press(tree, wanted === "flow" ? "收支" : wanted);
+    tree = await settlePage(ui);
+  }
   return { ui, tree };
 };
 /** The panel's request log for one path. */
@@ -1382,6 +1409,9 @@ test("a failing Host shows the error state with a retry that reloads", async () 
   host.failSnapshot = false;
   fire(retry);
   tree = await settlePage(ui);
+  // 恢复后落在「总看板」，切到收支页看本月三数
+  press(tree, "收支");
+  tree = await settlePage(ui);
   assert.match(textOf(tree), /¥2,250\.00/, "the retry loaded the ledger");
 });
 
@@ -1524,6 +1554,47 @@ test("transfers excluded from cash flow are surfaced with a count and an amount"
 test("a ledger with no excluded rows shows no exclusions notice", async () => {
   const { tree } = await open();
   assert.equal(byClass(tree, "dshfw-strip__excluded").length, 0, "没有转账时不显示提示");
+});
+
+
+test("the overview tab leads with the year's totals", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  // 三个年度大数：今年花了多少、赚了多少、剩多少
+  const bigs = byClass(tree, "dshfw-board__big-value").map((node) => childText(node));
+  assert.equal(bigs.length, 3, "year expense / income / balance");
+  assert.match(textOf(tree), /年总支出/, "the expense hero is labelled");
+  assert.match(textOf(tree), /年总收入/, "the income hero is labelled");
+  // 数字来自 Host 的 yearly 汇总，不是前端自己加的
+  const snap = window.__lastSnapshot;
+  assert.ok(bigs[0].length > 0, "expense total renders");
+});
+
+test("the overview shows twelve monthly bars and a yearly caption", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  const cols = byClass(tree, "dshfw-bars__col");
+  assert.equal(cols.length, 12, "twelve months of bars");
+  assert.equal(byClass(tree, "dshfw-balbars__col").length, 12, "twelve balance bars");
+  // 年度累计那句话挂在图下面
+  assert.match(textOf(tree), /累计/, "the yearly caption is present");
+});
+
+test("the monthly budget bar shows spent vs cap and flags an overrun", async () => {
+  const ledger = sampleLedger();
+  // 本月支出远超目标：进度条应带 over 标记
+  ledger.budgets = [{ id: "bud1", month: "default", category: "__total__", limit: 100_00 }];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const bar = byClass(tree, "dshfw-budgetbar")[0];
+  assert.ok(bar !== undefined, "the budget bar renders");
+  assert.equal(bar.props["data-over"], "true", "overrun is flagged");
+  assert.match(textOf(bar), /超/, "the overrun wording appears");
+});
+
+test("cross-year month labels carry the year so 11→12→1 is not read backwards", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  const labels = byClass(tree, "dshfw-bars__label").map((node) => childText(node));
+  assert.equal(labels.length, 12);
+  // 样本账本只跨一个月，至少不应出现空标签
+  assert.ok(labels.every((label) => /月/.test(label)), `every label names a month: ${labels.join(",")}`);
 });
 
 test("a real ledger never shows the demo notice", async () => {

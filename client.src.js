@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
     /** API root. */
     const API_BASE = "/dsh-finance/api";
     /** The four tabs, in display order. */
-    const TABS = Object.freeze(["flow", "assets", "invest", "plan"]);
+    const TABS = Object.freeze(["board", "flow", "assets", "invest", "plan"]);
     /** Expense categories (CONTRACT: shared with the Host). */
     const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
     /** Income is always this one category. */
@@ -290,6 +290,29 @@ window.__ModuleLoader__.load({
     const shortMonth = (value) => {
       const parsed = parseMonth(value);
       return parsed === null ? String(value ?? "") : `${String(parsed.month)}月`;
+    };
+    /**
+     * 坐标轴上的月份标签：**跨年时带上年份**。
+     *
+     * 只写「11月 12月 1月 2月」会让人以为是倒序（11→12→1 看着像回去了），
+     * 其实是跨年了。所以当年份与前一个不同时，在标签前标出年份的后两位。
+     *
+     * @param {Array<{ month: string }>} rows 按月升序的数据
+     * @returns {string[]} 与 `rows` 等长的标签
+     */
+    const monthAxisLabels = (rows) => {
+      let previousYear = null;
+      return rows.map((row) => {
+        const parsed = parseMonth(row.month);
+        if (parsed === null) return String(row.month ?? "");
+        const year = String(parsed.year);
+        // 只在「年份发生切换的那一根」标年份，其余只写月份，避免 12 根标签挤成一团
+        const label = previousYear !== null && previousYear !== year
+          ? `${String(parsed.month)}月\n${year.slice(2)}年`
+          : `${String(parsed.month)}月`;
+        previousYear = year;
+        return label;
+      });
     };
     /** An input value (`"1234.5"`) as fen, or null when it is not a number. */
     const parseYuan = (text) => {
@@ -588,6 +611,20 @@ window.__ModuleLoader__.load({
         monthsAvailable: Array.isArray(record.monthsAvailable) ? record.monthsAvailable.filter((key) => typeof key === "string") : [],
         // `settings.demo` 决定面板顶部的「这是演示账本」提示条；缺字段一律当假，
         // 免得在用户自己的真实账本上冒出一条莫名其妙的提示。
+        // 年度汇总：总看板的大数靠它，缺字段时给一个安全的零值
+        yearly: (() => {
+          const y = record.yearly !== null && typeof record.yearly === "object" ? record.yearly : {};
+          return {
+            year: typeof y.year === "string" && y.year !== "" ? y.year : String(new Date().getFullYear()),
+            income: fen(y.income),
+            expense: fen(y.expense),
+            balance: y.balance === undefined ? fen(y.income) - fen(y.expense) : fen(y.balance),
+            months: num(y.months, 0),
+            avgExpense: fen(y.avgExpense),
+            avgIncome: fen(y.avgIncome),
+            txnCount: num(y.txnCount, 0)
+          };
+        })(),
         settings: {
           currency: typeof record.settings?.currency === "string" ? record.settings.currency : "CNY",
           emergencyMonths: num(record.settings?.emergencyMonths, 6),
@@ -669,7 +706,7 @@ window.__ModuleLoader__.load({
         txns: [],
         /** Whether the previous load already had data (drives the skeleton). */
         everLoaded: false,
-        tab: "flow",
+        tab: "board",
         /** Active category filter, shared by the donut legend and the table. */
         filterCategory: "",
         /** Live search text. */
@@ -1557,7 +1594,7 @@ window.__ModuleLoader__.load({
             className: "dshfw-strip__aside",
             children: [
               jsx(Metric, { label: t("stat.netWorth"), value: money(snapshot.netWorth, { decimals: 0 }) }),
-              jsx(Metric, { label: t("stat.count", { n: String(s.txnCount) }), value: snapshot.byCategory.length > 0 ? t("flow.legendHint") : "" }),
+              jsx(Metric, { label: t("stat.count", { n: String(s.txnCount) }), value: "" }),
               // 收支口径说明：转账/还款不进收支大数，但用户必须知道它们在哪，
               // 否则会以为「我明明转了 2 万，支出怎么没变」。
               s.excludedCount > 0
@@ -1589,6 +1626,7 @@ window.__ModuleLoader__.load({
         role: "tablist",
         children: jsx("div", {
           className: "dshfw-tabs__track",
+          style: { "--tab-count": String(TABS.length) },
           children: [
             TABS.map((key) =>
               jsx("button", {
@@ -1645,29 +1683,133 @@ window.__ModuleLoader__.load({
     }
 
     /** Six months of income and spending as two overlaid lines. */
+    /**
+     * 12 个月的收支双柱图。
+     *
+     * 折线适合看「方向」，柱状适合看「多少」——用户问「每个月花了多少」时，
+     * 柱子的高低比折线的斜率直观得多。柱子从底部长出，每根错开 40ms，
+     * `prefers-reduced-motion` 下由全局规则关掉。
+     */
+    function MonthlyBars({ rows, current }) {
+      const max = Math.max(1, ...rows.map((row) => Math.max(row.income, row.expense)));
+      const labels = monthAxisLabels(rows);
+      return jsxs("div", {
+        className: "dshfw-bars",
+        children: [
+          jsxs("div", {
+            className: "dshfw-bars__legend",
+            children: [
+              jsxs("span", { className: "dshfw-key", children: [jsx("i", { className: "dshfw-key__dot dshfw-key__dot--expense" }), t("flow.expense")] }),
+              jsxs("span", { className: "dshfw-key", children: [jsx("i", { className: "dshfw-key__dot dshfw-key__dot--income" }), t("flow.income")] })
+            ]
+          }),
+          jsx("div", {
+            className: "dshfw-bars__plot",
+            children: rows.map((row, index) =>
+              jsx("div", {
+                key: row.month,
+                className: `dshfw-bars__col${row.month === current ? " is-current" : ""}`,
+                title: `${row.month} ${t("flow.income")} ${money(row.income, { decimals: 0 })} / ${t("flow.expense")} ${money(row.expense, { decimals: 0 })}`,
+                children: [
+                  jsxs("div", {
+                    className: "dshfw-bars__pair",
+                    children: [
+                      row.expense > 0
+                        ? jsx("span", {
+                            className: "dshfw-bars__bar dshfw-bars__bar--expense",
+                            style: { height: `${String(Math.max(1, (row.expense / max) * 100))}%`, animationDelay: `${String(index * 40)}ms` }
+                          })
+                        : null,
+                      row.income > 0
+                        ? jsx("span", {
+                            className: "dshfw-bars__bar dshfw-bars__bar--income",
+                            style: { height: `${String(Math.max(1, (row.income / max) * 100))}%`, animationDelay: `${String(index * 40 + 20)}ms` }
+                          })
+                        : null
+                    ]
+                  }),
+                  jsx("span", { className: "dshfw-bars__label", children: labels[index] })
+                ]
+              })
+            )
+          })
+        ]
+      });
+    }
+
+    /**
+     * 每月结余：正数向上、负数向下，共用一条零轴。
+     *
+     * 「哪几个月是入不敷出的」用这张图一眼就能看出来。
+     */
+    function BalanceBars({ rows, current }) {
+      const values = rows.map((row) => row.balance);
+      const top = Math.max(1, ...values);
+      const bottom = Math.min(0, ...values);
+      const span = top - bottom || 1;
+      // 零轴的位置（从顶部量）：全是正数时贴底，有负数时按比例上移
+      const zero = (top / span) * 100;
+      return jsxs("div", {
+        className: "dshfw-balbars",
+        children: [
+          jsx("div", {
+            className: "dshfw-balbars__plot",
+            children: [
+              jsx("span", { className: "dshfw-balbars__axis", style: { top: `${String(zero)}%` }, "aria-hidden": "true" }),
+              jsx("div", {
+                className: "dshfw-balbars__cols",
+                children: rows.map((row, index) => {
+                  const positive = row.balance >= 0;
+                  // 柱高按「占全幅的比例」算；正柱从零轴往上长，负柱从零轴往下长
+                  const height = (Math.abs(row.balance) / span) * 100;
+                  const style = positive
+                    ? { height: `${String(height)}%`, bottom: `${String(100 - zero)}%` }
+                    : { height: `${String(height)}%`, top: `${String(zero)}%` };
+                  return jsx("div", {
+                    key: row.month,
+                    className: `dshfw-balbars__col${row.month === current ? " is-current" : ""}`,
+                    title: `${row.month} ${t("stat.balance")} ${money(row.balance, { decimals: 0, sign: true })}`,
+                    children: row.balance === 0
+                      ? null
+                      : jsx("span", {
+                          className: `dshfw-balbars__bar ${positive ? "is-positive" : "is-negative"}`,
+                          style: { ...style, animationDelay: `${String(index * 40)}ms` }
+                        })
+                  });
+                })
+              })
+            ]
+          }),
+          jsx(AxisLabels, { items: monthAxisLabels(rows) })
+        ]
+      });
+    }
+
     function FlowTrend({ snapshot }) {
-      const trend = snapshot.trend;
-      const hasData = trend.some((row) => row.income !== 0 || row.expense !== 0);
+      // 12 个月的双柱图：柱子比折线更能回答「每个月花了多少」。
+      const rows = Array.isArray(snapshot.trend) ? snapshot.trend : [];
+      const hasData = rows.some((row) => row.income !== 0 || row.expense !== 0);
       return jsxs("div", {
         className: "dshfw-trend",
         children: [
-          jsxs("div", {
-            className: "dshfw-trend__legend",
-            children: [
-              jsxs("span", { className: "dshfw-key", children: [jsx("i", { className: "dshfw-key__line dshfw-key__line--income" }), t("flow.income")] }),
-              jsxs("span", { className: "dshfw-key", children: [jsx("i", { className: "dshfw-key__line dshfw-key__line--expense" }), t("flow.expense")] })
-            ]
-          }),
-          jsxs("div", {
-            className: "dshfw-trend__plot",
-            children: [
-              jsx(LineChart, { points: trend.map((row) => ({ label: shortMonth(row.month), value: row.expense })), color: "var(--dshfw-c0)", id: "expense", height: 128 }),
-              jsx(LineChart, { points: trend.map((row) => ({ label: shortMonth(row.month), value: row.income })), color: "var(--dshfw-income)", id: "income", height: 128, fill: false }),
-              hasData ? null : jsxs("span", { ...{ className: "dshfw-chart__empty" }, children: t("chart.noData") })
-            ]
-          }),
-          jsx(AxisLabels, { items: trend.map((row) => shortMonth(row.month)) })
+          hasData ? jsx(MonthlyBars, { rows, current: snapshot.month }) : jsxs("p", { className: "dshfw-muted", children: t("chart.noData") }),
+          jsx(AxisNote, { snapshot })
         ]
+      });
+    }
+
+    /** 「今年一共花了多少」——挂在趋势图下面的一行小字，不占版面。 */
+    function AxisNote({ snapshot }) {
+      const yearly = snapshot.yearly;
+      if (yearly === null || yearly === undefined || !(yearly.txnCount > 0)) return null;
+      return jsx("p", {
+        className: "dshfw-trend__yearly",
+        children: t("year.summary", {
+          year: String(yearly.year),
+          expense: money(yearly.expense, { decimals: 0 }),
+          income: money(yearly.income, { decimals: 0 }),
+          months: String(yearly.months)
+        })
       });
     }
 
@@ -2884,6 +3026,172 @@ window.__ModuleLoader__.load({
       });
     }
 
+
+    // ── 总看板：一年干了什么 ──────────────────────────────────────────────
+    /**
+     * 「总看板」页：把整年的钱放在一屏里。
+     *
+     * 版面按「问题的重要性」从上到下排，而不是按数据表结构排：
+     *
+     *   1. 年度两个大数（花了多少 / 赚了多少）——最想知道的答案，给最大字号
+     *   2. 每月收支双柱——「钱花在哪些月份」，柱高直接可比
+     *   3. 每月结余——「哪几个月入不敷出」，负数朝下
+     *   4. 年度支出构成 + 预算完成度——「花在哪、有没有超」
+     *
+     * 本月三数仍在「收支」页，这里刻意只讲全年，避免两页说同一件事。
+     */
+    function DashboardPage({ snapshot, onFilter }) {
+      const yearly = snapshot.yearly;
+      const rows = Array.isArray(snapshot.trend) ? snapshot.trend : [];
+      const hasData = rows.some((row) => row.income !== 0 || row.expense !== 0);
+      if (!hasData) {
+        return jsx(Card, { title: t("board.title"), children: jsx("p", { className: "dshfw-muted", children: t("chart.noData") }) });
+      }
+      const deficit = yearly.balance < 0;
+      const totalBudget = (Array.isArray(snapshot.budgets) ? snapshot.budgets : []).find((row) => row.category === "__total__") ?? null;
+      return jsxs("div", {
+        className: "dshfw-board",
+        children: [
+          // ① 年度的两个大数
+          jsxs("section", {
+            className: "dshfw-board__hero",
+            children: [
+              jsxs("div", {
+                className: "dshfw-board__big",
+                "data-tone": "expense",
+                children: [
+                  jsx("span", { className: "dshfw-board__big-label", children: t("board.yearExpense", { year: String(yearly.year) }) }),
+                  jsx("span", { className: "dshfw-board__big-value dshfw-num", children: money(yearly.expense, { decimals: 0 }) }),
+                  jsx("span", {
+                    className: "dshfw-board__big-foot",
+                    children: t("board.monthlyAvg", { amount: money(yearly.avgExpense, { decimals: 0 }) })
+                  })
+                ]
+              }),
+              jsxs("div", {
+                className: "dshfw-board__big",
+                "data-tone": "income",
+                children: [
+                  jsx("span", { className: "dshfw-board__big-label", children: t("board.yearIncome", { year: String(yearly.year) }) }),
+                  jsx("span", { className: "dshfw-board__big-value dshfw-num", children: money(yearly.income, { decimals: 0 }) }),
+                  jsx("span", {
+                    className: "dshfw-board__big-foot",
+                    children: t("board.monthlyAvg", { amount: money(yearly.avgIncome, { decimals: 0 }) })
+                  })
+                ]
+              }),
+              jsxs("div", {
+                className: "dshfw-board__big",
+                "data-tone": deficit ? "negative" : "balance",
+                children: [
+                  jsx("span", { className: "dshfw-board__big-label", children: t("board.yearBalance", { year: String(yearly.year) }) }),
+                  jsx("span", {
+                    className: "dshfw-board__big-value dshfw-num",
+                    children: money(yearly.balance, { decimals: 0, sign: true })
+                  }),
+                  jsx("span", {
+                    className: "dshfw-board__big-foot",
+                    children: deficit ? t("stat.deficit") : t("board.monthsCount", { n: String(yearly.months) })
+                  })
+                ]
+              })
+            ]
+          }),
+          // ② 每月收支双柱
+          jsx(Card, {
+            title: t("board.monthlyFlow"),
+            sub: t("board.monthlyFlowSub"),
+            children: [
+              jsx(MonthlyBars, { rows, current: snapshot.month }),
+              jsx(AxisNote, { snapshot })
+            ]
+          }),
+          // ③ 每月结余 + ④ 预算完成度
+          jsxs("div", {
+            className: "dshfw-grid dshfw-grid--2",
+            children: [
+              jsx(Card, {
+                title: t("board.monthlyBalance"),
+                sub: t("board.monthlyBalanceSub"),
+                children: jsx(BalanceBars, { rows, current: snapshot.month })
+              }),
+              jsx(Card, {
+                title: t("board.budget"),
+                sub: t("board.budgetSub"),
+                children: jsx(BudgetProgress, { snapshot, totalBudget })
+              })
+            ]
+          }),
+          // ⑤ 年度支出构成
+          jsx(Card, {
+            title: t("board.category"),
+            sub: t("board.categorySub"),
+            children: jsx(CategoryDonut, { snapshot, onFilter })
+          })
+        ]
+      });
+    }
+
+    /**
+     * 预算完成度：本月实际支出 vs 月度目标。
+     *
+     * 没有设「整月目标」时，用各分类预算之和当基准，并说明这一点——
+     * 否则用户会以为那个数是自己设的。
+     */
+    function BudgetProgress({ snapshot, totalBudget }) {
+      const s = snapshot.summary;
+      const limit = totalBudget !== null ? totalBudget.limit : (snapshot.budgetTotal?.limit ?? 0);
+      if (!(limit > 0)) {
+        return jsx("p", { className: "dshfw-muted", children: t("board.noBudget") });
+      }
+      const spent = s.expense;
+      const used = limit > 0 ? spent / limit : 0;
+      const over = spent > limit;
+      const explicit = totalBudget !== null;
+      return jsxs("div", {
+        className: "dshfw-budgetbar",
+        "data-over": over ? "true" : undefined,
+        children: [
+          jsx("div", {
+            className: "dshfw-budgetbar__track",
+            children: jsx("span", {
+              className: "dshfw-budgetbar__fill",
+              style: { width: `${String(Math.min(100, used * 100))}%` }
+            })
+          }),
+          jsxs("div", {
+            className: "dshfw-budgetbar__row",
+            children: [
+              jsx("span", { className: "dshfw-budgetbar__num dshfw-num", children: t("board.spentOf", { spent: money(spent, { decimals: 0 }), limit: money(limit, { decimals: 0 }) }) }),
+              jsx("span", {
+                className: "dshfw-budgetbar__pct dshfw-num",
+                children: over
+                  ? t("plan.over", { n: String(Math.round((used - 1) * 100)) })
+                  : t("board.remain", { amount: money(limit - spent, { decimals: 0 }) })
+              })
+            ]
+          }),
+          jsx("p", {
+            className: "dshfw-budgetbar__note",
+            children: explicit ? t("board.budgetExplicit") : t("board.budgetDerived")
+          })
+        ]
+      });
+    }
+
+    /** 年度支出构成的环形图（复用分类颜色与下钻交互）。 */
+    function CategoryDonut({ snapshot, onFilter }) {
+      const slices = donutSlices(snapshot);
+      if (slices.length === 0) return jsx("p", { className: "dshfw-muted", children: t("chart.noData") });
+      return jsx("div", {
+        className: "dshfw-flow__overview",
+        children: jsx(Card, {
+          title: t("flow.category"),
+          children: jsx(Composition, { slices, onSelect: onFilter, selected: "" })
+        })
+      });
+    }
+
     // ── the page ──────────────────────────────────────────────────────────
     /**
      * 底部常驻的「随手记一笔」输入条。
@@ -3040,6 +3348,7 @@ window.__ModuleLoader__.load({
         body = jsx(EmptyState, {});
       } else {
         const panes = {
+          board: [jsx(DashboardPage, { snapshot, onFilter })],
           flow: [jsx(StatStrip, { snapshot }), jsx("div", { className: "dshfw-grid dshfw-grid--2", children: [jsx(FlowTrend, { snapshot }), jsx(Card, { title: t("flow.top"), children: jsx(TopExpenses, { snapshot, onPick: onFilter }) })] }), jsx(FlowOverview, { snapshot, filter: state.filterCategory, onFilter }), jsx(FlowList, { snapshot })],
           assets: [jsx(AssetsPage, { snapshot })],
           invest: [jsx(InvestPage, { snapshot })],
@@ -3160,7 +3469,7 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
 .dshfw-inner{display:flex;flex-direction:column;gap:16px;width:100%;max-width:1180px;margin:0 auto;padding:14px clamp(14px,3vw,32px) 88px}
 .dshfw-tabs{position:sticky;top:0;z-index:6;padding:6px 0 2px;background:var(--dsw-alias-bg-base)}
-.dshfw-tabs__track{position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.dshfw-tabs__track{position:relative;display:grid;grid-template-columns:repeat(var(--tab-count,4),minmax(0,1fr));border-bottom:.5px solid var(--dsw-alias-border-l2)}
 .dshfw-tabs__tab{position:relative;z-index:1;height:36px;padding:0 6px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:13.5px;letter-spacing:.02em;cursor:pointer;transition:color .16s ease}
 .dshfw-tabs__tab:hover{color:var(--dsw-alias-label-secondary)}
 .dshfw-tabs__tab.is-active{color:var(--dsw-alias-label-primary);font-weight:600}
@@ -3483,6 +3792,52 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-demonote__text b{color:var(--dsw-alias-label-primary);font-weight:600}
 .dshfw-demonote__actions{flex:none;display:flex;gap:8px}
 
+
+/* ── 总看板 ─────────────────────────────────────────────────────────── */
+.dshfw-board{display:flex;flex-direction:column;gap:16px}
+.dshfw-board__hero{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;border:.5px solid var(--dsw-alias-border-l2);border-radius:14px;overflow:hidden;background:var(--dsw-alias-border-l2)}
+.dshfw-board__big{display:flex;flex-direction:column;gap:6px;padding:22px 24px 20px;background:var(--dsw-alias-bg-base)}
+.dshfw-board__big-label{font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.dshfw-board__big-value{font-size:clamp(26px,3vw,36px);line-height:1.1;letter-spacing:-.025em;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dshfw-board__big[data-tone="income"] .dshfw-board__big-value{color:var(--dshfw-income)}
+.dshfw-board__big[data-tone="balance"] .dshfw-board__big-value{color:var(--dshfw-pos)}
+.dshfw-board__big[data-tone="negative"] .dshfw-board__big-value{color:var(--dsw-alias-state-error-primary)}
+.dshfw-board__big-foot{font-size:11.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+
+/* 双柱图 */
+.dshfw-bars{display:flex;flex-direction:column;gap:10px}
+.dshfw-bars__legend{display:flex;gap:16px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshfw-bars__plot{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px;height:190px;align-items:end}
+.dshfw-bars__col{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%}
+.dshfw-bars__pair{display:flex;align-items:flex-end;justify-content:center;gap:3px;width:100%;height:100%;padding-bottom:2px}
+.dshfw-bars__bar{width:42%;max-width:22px;border-radius:3px 3px 0 0;transform-origin:bottom center;animation:dshfw-grow .6s cubic-bezier(.22,1,.36,1) both}
+.dshfw-bars__bar--expense{background:var(--dshfw-c0);opacity:.92}
+.dshfw-bars__bar--income{background:var(--dshfw-income);opacity:.72}
+.dshfw-bars__col.is-current .dshfw-bars__bar{outline:1.5px solid var(--dsw-alias-label-primary);outline-offset:1px}
+.dshfw-bars__label{font-size:11px;line-height:1.25;text-align:center;white-space:pre-line;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.dshfw-bars__col.is-current .dshfw-bars__label{color:var(--dsw-alias-label-primary);font-weight:600}
+
+/* 结余正负柱 */
+.dshfw-balbars{display:flex;flex-direction:column;gap:8px}
+.dshfw-balbars__plot{position:relative;height:172px}
+.dshfw-balbars__axis{position:absolute;left:0;right:0;top:var(--zero);border-top:.5px dashed var(--dsw-alias-border-l2)}
+.dshfw-balbars__cols{position:absolute;inset:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:5px}
+.dshfw-balbars__col{position:relative;height:100%}
+.dshfw-balbars__bar{position:absolute;left:50%;width:46%;max-width:20px;margin-left:-23%;border-radius:3px;transform-origin:center;animation:dshfw-grow .55s cubic-bezier(.22,1,.36,1) both}
+.dshfw-balbars__bar.is-positive{background:var(--dshfw-pos);opacity:.85}
+.dshfw-balbars__bar.is-negative{background:var(--dsw-alias-state-error-primary);opacity:.8}
+
+/* 预算完成度 */
+.dshfw-budgetbar{display:flex;flex-direction:column;gap:10px;padding-top:6px}
+.dshfw-budgetbar__track{height:12px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent);overflow:hidden}
+.dshfw-budgetbar__fill{display:block;height:100%;border-radius:999px;background:var(--dshfw-accent);transform-origin:left center;animation:dshfw-grow-x .8s cubic-bezier(.22,1,.36,1) both}
+.dshfw-budgetbar[data-over="true"] .dshfw-budgetbar__fill{background:repeating-linear-gradient(45deg,var(--dsw-alias-state-error-primary) 0 6px,color-mix(in srgb,var(--dsw-alias-state-error-primary) 70%,#fff) 6px 12px)}
+.dshfw-budgetbar__row{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.dshfw-budgetbar__num{font-size:19px;font-weight:600;letter-spacing:-.01em}
+.dshfw-budgetbar__pct{font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.dshfw-budgetbar[data-over="true"] .dshfw-budgetbar__pct{color:var(--dsw-alias-state-error-primary);font-weight:600}
+.dshfw-budgetbar__note{margin:0;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.dshfw-trend__yearly{margin:2px 0 0;font-size:11.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 /* ── motion ─────────────────────────────────────────────────────────── */
 @keyframes dshfw-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes dshfw-pop{from{opacity:0;transform:translateY(-4px) scale(.99)}to{opacity:1;transform:none}}
@@ -3501,6 +3856,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 @media (max-width:1200px){.dshfw-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:1100px){.dshfw-strip__aside{grid-column:1/-1;flex-direction:row;gap:24px;border-left:none;border-top:.5px solid var(--dsw-alias-border-l2)}}
 @media (max-width:900px){
+  .dshfw-board__hero{grid-template-columns:minmax(0,1fr)}
+  .dshfw-bars__plot{height:150px}
   .dshfw-strip{grid-template-columns:minmax(0,1fr)}
   .dshfw-stat{border-left:none;border-top:.5px solid var(--dsw-alias-border-l2)}
   .dshfw-stat:first-child{border-top:none}
@@ -3565,7 +3922,7 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       );
       // A fresh generation is a fresh page: it opens on this month, with no
       // filter, no half-finished wizard, nothing carried over.
-      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "flow", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
+      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "board", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
       if (typeof ctx.effect === "function") {
         ctx.effect(() => () => {
           for (const dispose of disposers) {
