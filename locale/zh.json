@@ -261,5 +261,6 @@
   "board.noBudget": "还没设预算或月度目标。可以在「规划」页设一个整月支出上限。",
   "board.category": "年度支出构成",
   "board.categorySub": "点分类可下钻到对应明细",
-  "year.summary": "{year} 年累计：支出 {expense}，收入 {income}，来自 {months} 个月的数据"
+  "year.summary": "{year} 年累计：支出 {expense}，收入 {income}，来自 {months} 个月的数据",
+  "board.yearDeficit": "全年入不敷出（{n} 个月）"
 }

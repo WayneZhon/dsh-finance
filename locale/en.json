@@ -261,5 +261,6 @@
   "board.noBudget": "No budget yet. Set a monthly spending cap on the Planning tab.",
   "board.category": "Where the year went",
   "board.categorySub": "Click a category to drill into its transactions",
-  "year.summary": "{year} so far: {expense} spent, {income} earned, across {months} months"
+  "year.summary": "{year} so far: {expense} spent, {income} earned, across {months} months",
+  "board.yearDeficit": "Spent more than earned ({n} months)"
 }

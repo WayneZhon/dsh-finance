@@ -3097,7 +3097,9 @@ window.__ModuleLoader__.load({
                   }),
                   jsx("span", {
                     className: "dshfw-board__big-foot",
-                    children: deficit ? t("stat.deficit") : t("board.monthsCount", { n: String(yearly.months) })
+                    children: deficit
+                      ? t("board.yearDeficit", { n: String(yearly.months) })
+                      : t("board.monthsCount", { n: String(yearly.months) })
                   })
                 ]
               })
@@ -3496,7 +3498,7 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-tabs__tab:hover{color:var(--dsw-alias-label-secondary)}
 .dshfw-tabs__tab.is-active{color:var(--dsw-alias-label-primary);font-weight:600}
 .dshfw-tabs__ink{position:absolute;left:0;bottom:-.5px;height:2px;border-radius:2px;background:var(--dshfw-accent);transition:transform .26s cubic-bezier(.22,.8,.3,1)}
-.dshfw-tabpane{display:flex;flex-direction:column;gap:16px;animation:dshfw-in .12s ease-out}
+.dshfw-tabpane{display:flex;flex-direction:column;gap:16px;animation:dshfw-in .12s ease-out both}
 
 /* ── cards & grid ───────────────────────────────────────────────────── */
 .dshfw-grid{display:grid;gap:16px}
@@ -3866,6 +3868,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-budgetbar__note{margin:0;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
 .dshfw-trend__yearly{margin:2px 0 0;font-size:11.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 /* ── motion ─────────────────────────────────────────────────────────── */
+/* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来
+   （被禁用、被容器裁剪、或渲染器提前截图），内容会永久停在 opacity:0 上。 */
 @keyframes dshfw-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes dshfw-pop{from{opacity:0;transform:translateY(-4px) scale(.99)}to{opacity:1;transform:none}}
 @keyframes dshfw-fadein{from{opacity:0}to{opacity:1}}
@@ -4221,7 +4225,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "board.noBudget": "还没设预算或月度目标。可以在「规划」页设一个整月支出上限。",
       "board.category": "年度支出构成",
       "board.categorySub": "点分类可下钻到对应明细",
-      "year.summary": "{year} 年累计：支出 {expense}，收入 {income}，来自 {months} 个月的数据"
+      "year.summary": "{year} 年累计：支出 {expense}，收入 {income}，来自 {months} 个月的数据",
+      "board.yearDeficit": "全年入不敷出（{n} 个月）"
     };
     /** English dictionary. */
     const DICT_EN = {
@@ -4482,7 +4487,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "board.noBudget": "No budget yet. Set a monthly spending cap on the Planning tab.",
       "board.category": "Where the year went",
       "board.categorySub": "Click a category to drill into its transactions",
-      "year.summary": "{year} so far: {expense} spent, {income} earned, across {months} months"
+      "year.summary": "{year} so far: {expense} spent, {income} earned, across {months} months",
+      "board.yearDeficit": "Spent more than earned ({n} months)"
     };
 
     exports.apply = apply;
