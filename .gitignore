@@ -1,0 +1,13 @@
+node_modules/
+*.tgz
+.DS_Store
+*.log
+.env
+.env.*
+
+# 构建产物：client.js 需要提交（它随包发布、用户装完即可用，不需要在本地跑构建），
+# 但下面这些是本机调试留下的东西，不进仓库。
+*.corrupt-*
+*.tmp
+# 内部开发契约（多角色协作用），不属于开源仓库内容
+CONTRACT.md

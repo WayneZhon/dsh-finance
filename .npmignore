@@ -1,0 +1,15 @@
+# npm publish 白名单之外的兜底排除。
+# `files` 字段才是真正的白名单；这里只挡住即使被写进 files 也不该发出去的东西。
+*.tgz
+.node_modules/
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+*.tmp
+*.corrupt-*
+# 测试与开发辅助：发布包只需要能被 Harness 加载的那部分
+lib/*.test.mjs
+scripts/
+CONTRACT.md

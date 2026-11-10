@@ -1,0 +1,15 @@
+# @wayne/dsh-finance profile patch layer — one loader entry.
+#
+# Host half: a local JSON ledger (~/.dsh/dsh-finance/finance.json), the bill
+# importer, the rule classifier, the dashboard aggregator, the
+# /dsh-finance/api routes the browser panel reads and writes through, an AI
+# bridge that streams from the user's own default model, and eight agent tools.
+#
+# Browser half: picked up by dsh-client-modules through `dsh.client` and
+# registers the four-page dashboard under `main` plus its sidebar icon.
+#
+# Everything stays on this machine. No bank access, no trading, no holdings
+# advice — the plugin records and shows, it never moves money.
+- insert:
+    - id: finance-workspace
+      name: "@wayne/dsh-finance"

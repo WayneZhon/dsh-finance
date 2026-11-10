@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="个人理财工作台">
+  <title>个人理财工作台</title>
+  <defs>
+    <linearGradient id="ink" x1="14" y1="10" x2="112" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0F766E"/>
+      <stop offset="0.55" stop-color="#0D9488"/>
+      <stop offset="1" stop-color="#14B8A6"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="30" y1="70" x2="100" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方底：墨绿到青，代表账本封面 -->
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#ink)"/>
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#paper)"/>
+
+  <!-- 账本内页：三行账目 -->
+  <g stroke="#FFFFFF" stroke-opacity="0.92" stroke-linecap="round">
+    <path d="M30 44h34" stroke-width="6"/>
+    <path d="M30 62h22" stroke-width="6"/>
+    <path d="M30 80h40" stroke-width="6"/>
+  </g>
+
+  <!-- 右侧上升折线：净资产走势 -->
+  <path d="M74 86l14-17 12 10 16-25" fill="none" stroke="url(#gold)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="116" cy="54" r="6.5" fill="#FDE68A"/>
+
+  <!-- 左侧账目行首的小圆点 -->
+  <g fill="#5EEAD4" fill-opacity="0.85">
+    <circle cx="22" cy="44" r="3.4"/>
+    <circle cx="22" cy="62" r="3.4"/>
+    <circle cx="22" cy="80" r="3.4"/>
+  </g>
+</svg>

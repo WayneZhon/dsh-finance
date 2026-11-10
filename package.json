@@ -1,0 +1,78 @@
+{
+  "name": "@wayne/dsh-finance",
+  "version": "1.0.0",
+  "private": false,
+  "description": "个人理财工作台：导入支付宝/微信/银行账单自动分类，四页看板（收支/资产/投资/规划），一句话随手记账，AI 洞察与 8 个 agent 工具。数据只存本机。",
+  "license": "MIT",
+  "author": {
+    "name": "WayneZhon"
+  },
+  "homepage": "https://github.com/WayneZhon/dsh-finance#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WayneZhon/dsh-finance.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WayneZhon/dsh-finance/issues"
+  },
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "!lib/*.test.mjs",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "personal-finance",
+    "budget",
+    "expense-tracker",
+    "bill-import",
+    "alipay",
+    "wechat-pay",
+    "个人理财",
+    "记账",
+    "账单导入",
+    "预算",
+    "净资产"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check index.js && node scripts/build.mjs --check",
+    "test": "node --test lib/ scripts/test-integration.mjs && node scripts/test.mjs",
+    "demo": "node scripts/make-demo.mjs",
+    "prepublishOnly": "node scripts/prepublish.mjs && npm test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
