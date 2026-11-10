@@ -559,7 +559,12 @@ window.__ModuleLoader__.load({
           balance: summary.balance === undefined ? income - expense : fen(summary.balance),
           txnCount: num(summary.txnCount, 0),
           autoClassified: num(summary.autoClassified, 0),
-          autoRate: num(summary.autoRate, 0)
+          autoRate: num(summary.autoRate, 0),
+          // 收支口径：有多少笔被判定为转账/还款没算进收支，多少笔大额待确认
+          excludedCount: num(summary.excludedCount, 0),
+          excludedIncome: fen(summary.excludedIncome),
+          excludedExpense: fen(summary.excludedExpense),
+          reviewCount: num(summary.reviewCount, 0)
         },
         byCategory: categories,
         byPurpose: Array.isArray(record.byPurpose) ? record.byPurpose.filter((row) => row !== null && typeof row === "object").map((row) => ({ purpose: String(row.purpose ?? ""), amount: fen(row.amount), share: num(row.share, 0) })) : [],
@@ -1546,7 +1551,24 @@ window.__ModuleLoader__.load({
             className: "dshfw-strip__aside",
             children: [
               jsx(Metric, { label: t("stat.netWorth"), value: money(snapshot.netWorth, { decimals: 0 }) }),
-              jsx(Metric, { label: t("stat.count", { n: String(s.txnCount) }), value: snapshot.byCategory.length > 0 ? t("flow.legendHint") : "" })
+              jsx(Metric, { label: t("stat.count", { n: String(s.txnCount) }), value: snapshot.byCategory.length > 0 ? t("flow.legendHint") : "" }),
+              // 收支口径说明：转账/还款不进收支大数，但用户必须知道它们在哪，
+              // 否则会以为「我明明转了 2 万，支出怎么没变」。
+              s.excludedCount > 0
+                ? jsx("p", {
+                    className: "dshfw-strip__excluded",
+                    children: t("stat.excluded", {
+                      n: String(s.excludedCount),
+                      amount: money(s.excludedExpense + s.excludedIncome, { decimals: 0 })
+                    })
+                  })
+                : null,
+              s.reviewCount > 0
+                ? jsx("p", {
+                    className: "dshfw-strip__review",
+                    children: t("stat.review", { n: String(s.reviewCount) })
+                  })
+                : null
             ]
           })
         ]
@@ -3164,6 +3186,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-stat--negative .dshfw-stat__value{color:var(--dsw-alias-state-error-primary)}
 .dshfw-stat--positive .dshfw-stat__value{color:var(--dsw-pos,var(--dshfw-pos))}
 .dshfw-strip__aside{display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px 18px;border-left:.5px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-label-primary) 2.5%,transparent)}
+.dshfw-strip__excluded{margin:0;padding-top:8px;border-top:.5px dotted var(--dsw-alias-border-l2);font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.dshfw-strip__review{margin:0;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-state-warning-primary,var(--dshfw-c0));font-variant-numeric:tabular-nums}
 .dshfw-metric{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .dshfw-metric__label{font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
 .dshfw-metric__value{font-size:13px;font-weight:600;letter-spacing:-.01em}
@@ -3592,7 +3616,6 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "tab.plan": "规划",
       "flow.donut": "支出构成",
       "flow.donutCenter": "支出合计",
-      "flow.legendHint": "点分类筛流水",
       "flow.trend": "近 6 个月",
       "flow.income": "收入",
       "flow.expense": "支出",
@@ -3783,7 +3806,9 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "demo.import": "导入我的账单",
       "demo.clear": "清空演示数据",
       "demo.clearing": "清空中",
-      "demo.cleared": "演示数据已清空，可以导入你自己的账单了"
+      "demo.cleared": "演示数据已清空，可以导入你自己的账单了",
+      "stat.excluded": "另有 {n} 笔转账/还款 {amount} 未计入收支",
+      "stat.review": "{n} 笔大额待确认是否算收支"
     };
     /** English dictionary. */
     const DICT_EN = {
@@ -3830,7 +3855,6 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "tab.plan": "Planning",
       "flow.donut": "Where it went",
       "flow.donutCenter": "Total spent",
-      "flow.legendHint": "Pick a category to filter the list",
       "flow.trend": "Last 6 months",
       "flow.income": "Income",
       "flow.expense": "Expense",
@@ -4021,7 +4045,9 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "demo.import": "Import my bills",
       "demo.clear": "Clear demo data",
       "demo.clearing": "Clearing",
-      "demo.cleared": "Demo data cleared. Import your own bills whenever you are ready."
+      "demo.cleared": "Demo data cleared. Import your own bills whenever you are ready.",
+      "stat.excluded": "{n} transfers/repayments ({amount}) excluded from cash flow",
+      "stat.review": "{n} large entries awaiting review"
     };
 
     exports.apply = apply;

@@ -47,7 +47,6 @@
   "tab.plan": "Planning",
   "flow.donut": "Where it went",
   "flow.donutCenter": "Total spent",
-  "flow.legendHint": "Pick a category to filter the list",
   "flow.trend": "Last 6 months",
   "flow.income": "Income",
   "flow.expense": "Expense",
@@ -238,5 +237,7 @@
   "demo.import": "Import my bills",
   "demo.clear": "Clear demo data",
   "demo.clearing": "Clearing",
-  "demo.cleared": "Demo data cleared. Import your own bills whenever you are ready."
+  "demo.cleared": "Demo data cleared. Import your own bills whenever you are ready.",
+  "stat.excluded": "{n} transfers/repayments ({amount}) excluded from cash flow",
+  "stat.review": "{n} large entries awaiting review"
 }

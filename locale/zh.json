@@ -47,7 +47,6 @@
   "tab.plan": "规划",
   "flow.donut": "支出构成",
   "flow.donutCenter": "支出合计",
-  "flow.legendHint": "点分类筛流水",
   "flow.trend": "近 6 个月",
   "flow.income": "收入",
   "flow.expense": "支出",
@@ -238,5 +237,7 @@
   "demo.import": "导入我的账单",
   "demo.clear": "清空演示数据",
   "demo.clearing": "清空中",
-  "demo.cleared": "演示数据已清空，可以导入你自己的账单了"
+  "demo.cleared": "演示数据已清空，可以导入你自己的账单了",
+  "stat.excluded": "另有 {n} 笔转账/还款 {amount} 未计入收支",
+  "stat.review": "{n} 笔大额待确认是否算收支"
 }

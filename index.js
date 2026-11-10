@@ -68,14 +68,18 @@ export function apply(ctx, config = {}) {
     log("账本加载失败：", error);
   }
 
-  // 首次装的空账本先铺一份 12 个月的演示数据：用户第一次点开「理财」时看到
-  // 的是有血有肉的看板，而不是四个空页面。清空过就不会再铺（见 seedDemoIfEmpty）。
-  if (config.demo !== false) {
+  // 装完就是干净账本：不再自动铺演示数据，用户第一次点开看到的是引导页，
+// 由他自己决定「导入账单」还是「先看看示例」。
+  //
+  // 旧版本会给空账本自动铺 12 个月演示数据。这个行为已经去掉（默认
+  // `demo: false`）——理财插件里的数字必须先是用户自己的，演示数据再好看
+  // 也只是一份需要被清掉的干扰。想恢复旧行为可设 `demo: true`。
+  if (config.demo === true) {
     try {
       Promise.resolve()
         .then(() => store.seedDemoIfEmpty())
         .then((seeded) => {
-          if (seeded === true) log("已铺好演示账本（12 个月），随时可在面板里换成自己的数据");
+          if (seeded === true) log("已铺好演示账本（12 个月），随时可在面板里清空");
         })
         .catch((error) => log("演示账本初始化跳过：", error));
     } catch (error) {

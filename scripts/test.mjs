@@ -362,7 +362,23 @@ const snapshotOf = (ledger, month, now) => {
   if (income > expense) tips.push({ level: "good", title: "这个月有结余", detail: "继续保持。" });
   return {
     month,
-    summary: { income, expense, balance: income - expense, txnCount: inMonth.length, autoClassified: inMonth.length, autoRate: 1 },
+    summary: (() => {
+      // 与真 Host 同口径：money 标记的行不计入收支，但要报出笔数与金额。
+      const excluded = inMonth.filter((txn) => txn.money === true);
+      const sum = (list) => list.reduce((acc, txn) => acc + txn.amount, 0);
+      return {
+        income,
+        expense,
+        balance: income - expense,
+        txnCount: inMonth.length,
+        autoClassified: inMonth.length,
+        autoRate: 1,
+        excludedCount: excluded.length,
+        excludedIncome: sum(excluded.filter((txn) => txn.direction === "income")),
+        excludedExpense: sum(excluded.filter((txn) => txn.direction === "expense")),
+        reviewCount: inMonth.filter((txn) => txn.flow?.verdict === "review").length
+      };
+    })(),
     byCategory,
     byPurpose: [],
     trend,
@@ -1487,6 +1503,27 @@ test("a demo ledger says so and can be cleared for real data", async () => {
   const deletes = callsTo("/demo").filter((call) => call.method === "DELETE");
   assert.equal(deletes.length, 1, "the clear goes through DELETE /demo");
   assert.equal(byClass(after, "dshfw-demonote").length, 0, "the notice is gone");
+});
+
+test("transfers excluded from cash flow are surfaced with a count and an amount", async () => {
+  // A ledger where two rows were judged "not cash flow" (a transfer and a credit
+  // card repayment). The headline numbers must NOT include them, and the page
+  // must say where the money went.
+  const ledger = sampleLedger();
+  ledger.txns.push({ id: nextId("txn"), date: "2026-11-08", amount: 2_000_00, direction: "expense", category: "其他", purpose: "生活必须", merchant: "转账到余额宝", account: "招商银行", note: "", source: "import", money: true, flow: { verdict: "exclude", reason: "transfer", detail: "账户间转账" } });
+  ledger.txns.push({ id: nextId("txn"), date: "2026-11-09", amount: 328_00, direction: "expense", category: "还贷", purpose: "未来保障", merchant: "信用卡还款", account: "招商银行", note: "", source: "import", money: true, flow: { verdict: "exclude", reason: "repayment", detail: "信用卡还款" } });
+  const { tree } = await open(() => ledger);
+  const notice = textOfClass(tree, "dshfw-strip__excluded")[0] ?? "";
+  assert.match(notice, /2 笔/, `提示里要说清有几笔被排除，实际：「${notice}」`);
+  assert.match(notice, /¥2,328/, `提示里要给出被排除的金额，实际：「${notice}」`);
+  // The expense headline stays at the countable sum — the ¥2,000 transfer must not inflate it.
+  const expenseText = textOfClass(tree, "dshfw-stat__amount")[1] ?? "";
+  assert.ok(!expenseText.includes("2,000"), `转账不应计入支出大数，实际支出显示为「${expenseText}」`);
+});
+
+test("a ledger with no excluded rows shows no exclusions notice", async () => {
+  const { tree } = await open();
+  assert.equal(byClass(tree, "dshfw-strip__excluded").length, 0, "没有转账时不显示提示");
 });
 
 test("a real ledger never shows the demo notice", async () => {
