@@ -330,5 +330,6 @@
   "policy.scanShowRaw": "Show recognised text",
   "policy.scanHideRaw": "Hide text",
   "policy.scanNoText": "No text recognised",
-  "policy.policyNo": "Policy number"
+  "policy.policyNo": "Policy number",
+  "policy.pending": "To fill in"
 }

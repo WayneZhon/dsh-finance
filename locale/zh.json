@@ -330,5 +330,6 @@
   "policy.scanShowRaw": "查看识别到的原文",
   "policy.scanHideRaw": "收起原文",
   "policy.scanNoText": "没有识别到文本",
-  "policy.policyNo": "保单号"
+  "policy.policyNo": "保单号",
+  "policy.pending": "待补充"
 }

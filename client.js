@@ -92,6 +92,10 @@ window.__ModuleLoader__.load({
     const POLICY_KINDS = Object.freeze(["insurance", "deposit", "wealth", "other"]);
     const INSURANCE_TYPES = Object.freeze(["medical", "critical", "accident", "life", "annuity", "car", "property", "other"]);
     const PAY_CYCLES = Object.freeze(["yearly", "half_year", "quarterly", "monthly", "once"]);
+    /** 待办类型：与 Host 的 TODO_KINDS 对齐。 */
+    const TODO_KINDS = Object.freeze(["premium", "maturity", "waiting", "grace", "checkup", "claim"]);
+    /** 家庭成员与投保人的关系。 */
+    const RELATIONS = Object.freeze(["self", "spouse", "child", "parent", "other"]);
     /** How many rows the import preview shows. */
     const PREVIEW_ROWS = 30;
     /** How many months `GET /txns` asks for at once. */
@@ -676,8 +680,9 @@ window.__ModuleLoader__.load({
                   .map((item) => ({
                     ...item,
                     kind: POLICY_KINDS.includes(item.kind) ? item.kind : "other",
-                    amount: fen(item.amount),
-                    premium: fen(item.premium),
+                    // null 保留为 null（未知），不要被 fen() 折成 0
+                    amount: item.amount === null || item.amount === undefined ? null : fen(item.amount),
+                    premium: item.premium === null || item.premium === undefined ? null : fen(item.premium),
                     rate: num(item.rate, 0),
                     paidPeriods: num(item.paidPeriods, 0),
                     totalPeriods: num(item.totalPeriods, 0)
@@ -686,7 +691,60 @@ window.__ModuleLoader__.load({
             overdue: num(source.overdue, 0),
             soon: num(source.soon, 0),
             totalPremium: fen(source.totalPremium),
-            totalAmount: fen(source.totalAmount)
+            totalAmount: fen(source.totalAmount),
+            // ── 保单档案 / 待办 / 日历 / 家庭 ──
+            archive: normalizeArchive(source.archive),
+            todos: normalizeTodos(source.todos),
+            calendar: Array.isArray(source.calendar)
+              ? source.calendar.map((entry) => ({
+                  month: String(entry?.month ?? ""),
+                  amount: fen(entry?.amount),
+                  items: Array.isArray(entry?.items) ? entry.items.map((item) => ({ ...item, amount: fen(item?.amount) })) : []
+                }))
+              : [],
+            family: (() => {
+              const fam = source.family !== null && typeof source.family === "object" ? source.family : {};
+              return {
+                byMember: Array.isArray(fam.byMember)
+                  ? fam.byMember.map((member) => ({
+                      id: String(member?.id ?? ""),
+                      name: String(member?.name ?? ""),
+                      relation: String(member?.relation ?? "other"),
+                      count: num(member?.count, 0),
+                      insuranceCount: num(member?.insuranceCount, 0),
+                      annualPremium: fen(member?.annualPremium),
+                      coverage: fen(member?.coverage),
+                      policies: Array.isArray(member?.policies) ? member.policies : []
+                    }))
+                  : [],
+                unassigned: Array.isArray(fam.unassigned) ? fam.unassigned : [],
+                total: num(fam.total, 0)
+              };
+            })(),
+            members: Array.isArray(source.members)
+              ? source.members.map((member) => ({ id: String(member?.id ?? ""), name: String(member?.name ?? ""), relation: String(member?.relation ?? "other") }))
+              : [],
+            payments: Array.isArray(source.payments)
+              ? source.payments.map((payment) => ({ id: String(payment?.id ?? ""), policyId: String(payment?.policyId ?? ""), date: String(payment?.date ?? ""), amount: fen(payment?.amount), note: String(payment?.note ?? "") }))
+              : []
+          };
+        })(),
+        // 工作台：先回答「我现在要做什么」
+        workbench: (() => {
+          const source = record.workbench !== null && typeof record.workbench === "object" ? record.workbench : {};
+          const counts = source.counts !== null && typeof source.counts === "object" ? source.counts : {};
+          return {
+            urgent: normalizeTodos(source.urgent),
+            todos: normalizeTodos(source.todos),
+            overdue: num(source.overdue, 0),
+            today: num(source.today, 0),
+            soon: num(source.soon, 0),
+            counts: {
+              policies: num(counts.policies, 0),
+              members: num(counts.members, 0),
+              attachments: num(counts.attachments, 0),
+              incomplete: num(counts.incomplete, 0)
+            }
           };
         })(),
         // 年度汇总：总看板的大数靠它，缺字段时给一个安全的零值
@@ -716,6 +774,104 @@ window.__ModuleLoader__.load({
         }
       };
     };
+    /** 待办列表：时间相关的字段要能安全渲染。 */
+    const normalizeTodos = (list) =>
+      Array.isArray(list)
+        ? list
+            .filter((todo) => todo !== null && typeof todo === "object")
+            .map((todo) => ({
+              key: String(todo.key ?? ""),
+              policyId: String(todo.policyId ?? ""),
+              kind: TODO_KINDS.includes(todo.kind) ? todo.kind : "checkup",
+              title: String(todo.title ?? ""),
+              detail: String(todo.detail ?? ""),
+              dueDate: String(todo.dueDate ?? ""),
+              amount: fen(todo.amount),
+              memberId: String(todo.memberId ?? ""),
+              days: num(todo.days, 0),
+              bucket: ["overdue", "today", "soon", "later"].includes(todo.bucket) ? todo.bucket : "later",
+              status: String(todo.status ?? "pending"),
+              note: String(todo.note ?? ""),
+              evidence: todo.evidence ?? null
+            }))
+        : [];
+
+    /** 保单档案（看懂卡片）：结构比较深，逐层给默认值，缺字段也不能崩。 */
+    const normalizeArchive = (list) =>
+      Array.isArray(list)
+        ? list
+            .filter((card) => card !== null && typeof card === "object")
+            .map((card) => ({
+              id: String(card.id ?? ""),
+              kind: POLICY_KINDS.includes(card.kind) ? card.kind : "other",
+              type: String(card.type ?? ""),
+              name: String(card.name ?? ""),
+              issuer: String(card.issuer ?? ""),
+              policyNo: String(card.policyNo ?? ""),
+              status: String(card.status ?? "active"),
+              memberId: String(card.memberId ?? ""),
+              summary: String(card.summary ?? ""),
+              people: {
+                holder: String(card.people?.holder ?? ""),
+                insured: Array.isArray(card.people?.insured) ? card.people.insured.map(String) : [],
+                beneficiaries: Array.isArray(card.people?.beneficiaries) ? card.people.beneficiaries.map(String) : []
+              },
+              duties: Array.isArray(card.duties)
+                ? card.duties.map((duty) => ({
+                    name: String(duty?.name ?? ""),
+                    amount: fen(duty?.amount),
+                    deductible: fen(duty?.deductible),
+                    waitingDays: num(duty?.waitingDays, 0),
+                    limit: String(duty?.limit ?? ""),
+                    source: String(duty?.source ?? "")
+                  }))
+                : [],
+              limits: {
+                exclusions: Array.isArray(card.limits?.exclusions)
+                  ? card.limits.exclusions.map((item) => ({ text: String(item?.text ?? ""), source: String(item?.source ?? "") }))
+                  : [],
+                deductible: fen(card.limits?.deductible),
+                waitingDays: num(card.limits?.waitingDays, 0),
+                waitingEndsOn: String(card.limits?.waitingEndsOn ?? ""),
+                coverageYears: num(card.limits?.coverageYears, 0)
+              },
+              paying: {
+                premium: fen(card.paying?.premium),
+                payCycle: String(card.paying?.payCycle ?? ""),
+                payYears: num(card.paying?.payYears, 0),
+                paidPeriods: num(card.paying?.paidPeriods, 0),
+                totalPeriods: num(card.paying?.totalPeriods, 0),
+                remainingPeriods: num(card.paying?.remainingPeriods, 0),
+                paidTotal: fen(card.paying?.paidTotal),
+                payments: Array.isArray(card.paying?.payments)
+                  ? card.paying.payments.map((payment) => ({ id: String(payment?.id ?? ""), date: String(payment?.date ?? ""), amount: fen(payment?.amount) }))
+                  : [],
+                nextDueDate: String(card.paying?.nextDueDate ?? "")
+              },
+              claim: {
+                channel: String(card.claim?.channel ?? ""),
+                phone: String(card.claim?.phone ?? ""),
+                documents: Array.isArray(card.claim?.documents) ? card.claim.documents.map(String) : []
+              },
+              dates: {
+                effectiveDate: String(card.dates?.effectiveDate ?? ""),
+                effectiveDays: card.dates?.effectiveDays ?? null,
+                dueDate: String(card.dates?.dueDate ?? ""),
+                maturityDate: String(card.dates?.maturityDate ?? ""),
+                coverageUsable: card.dates?.coverageUsable ?? null
+              },
+              attachments: Array.isArray(card.attachments)
+                ? card.attachments.map((item) => ({ id: String(item?.id ?? ""), name: String(item?.name ?? ""), kind: String(item?.kind ?? "other"), at: num(item?.at, 0), textLength: num(item?.textLength, 0) }))
+                : [],
+              completeness: {
+                missing: Array.isArray(card.completeness?.missing) ? card.completeness.missing.map(String) : [],
+                ready: card.completeness?.ready === true,
+                ratio: num(card.completeness?.ratio, 0)
+              },
+              note: String(card.note ?? "")
+            }))
+        : [];
+
     /** An empty snapshot, used while loading and after a cache reset. */
     const emptySnapshot = (month = monthKey()) => normalizeSnapshot({ month });
     /** Whether a snapshot has anything worth showing. */
@@ -2238,6 +2394,288 @@ window.__ModuleLoader__.load({
     }
 
 
+
+    // ── 工作台：我现在要做什么 ────────────────────────────────────────────
+
+    /** 待办类型的中文/图标语义（颜色用于区分紧急度而非类型）。 */
+    const TODO_LABELS = Object.freeze({
+      premium: "续期缴费",
+      maturity: "到期处理",
+      waiting: "等待期结束",
+      grace: "犹豫期结束",
+      checkup: "保单检查",
+      claim: "理赔跟进"
+    });
+
+    /**
+     * 一行待办：标题 + 还剩几天 + 完成/稍后。
+     *
+     * 「完成」与「稍后」是这整套设计的落点——提醒的意义在于**能被执行**，
+     * 不能执行的提醒只是噪音。
+     */
+    function TodoRow({ todo, onDone, onSnooze }) {
+      const overdue = todo.bucket === "overdue";
+      const today = todo.bucket === "today";
+      return jsxs("li", {
+        className: "dshfw-todo",
+        "data-tone": overdue ? "overdue" : today ? "today" : todo.bucket === "soon" ? "soon" : "later",
+        children: [
+          jsx("span", { className: "dshfw-todo__dot", "aria-hidden": "true" }),
+          jsx("div", {
+            className: "dshfw-todo__main",
+            children: [
+              jsxs("span", {
+                className: "dshfw-todo__title",
+                children: [jsx("i", { className: "dshfw-todo__kind", children: t(`todo.kind.${todo.kind}`) }), todo.title]
+              }),
+              jsxs("span", {
+                className: "dshfw-todo__meta",
+                children: [
+                  todo.dueDate,
+                  todo.amount > 0 ? ` · ${money(todo.amount, { decimals: 0 })}` : "",
+                  todo.detail === "" ? "" : ` · ${todo.detail}`
+                ]
+              })
+            ]
+          }),
+          jsx("span", {
+            className: "dshfw-todo__when dshfw-num",
+            children: overdue
+              ? t("todo.overdue", { n: String(Math.abs(todo.days)) })
+              : todo.days === 0
+                ? t("todo.today")
+                : t("todo.inDays", { n: String(todo.days) })
+          }),
+          jsxs("div", {
+            className: "dshfw-todo__actions",
+            children: [
+              jsx(Button, { tone: "primary", size: "sm", onClick: () => onDone(todo), label: t("todo.done"), children: t("todo.done") }),
+              jsx(Button, { tone: "ghost", size: "sm", onClick: () => onSnooze(todo), label: t("todo.snooze"), children: t("todo.snooze") })
+            ]
+          })
+        ]
+      });
+    }
+
+    /**
+     * 工作台首页。
+     *
+     * 顺序刻意是「待办在前、概览在后」：用户打开面板最想知道的是
+     * **有没有事要做**，而不是先看一堆统计。上传保单是主按钮，
+     * 因为它是让这个页面变得有用的唯一入口。
+     */
+    function WorkbenchPage({ snapshot, onOpenPolicy }) {
+      const [scanning, setScanning] = react.useState(false);
+      const [memberForm, setMemberForm] = react.useState(false);
+      const board = snapshot.workbench ?? { urgent: [], todos: [], overdue: 0, today: 0, soon: 0, counts: {} };
+      const policies = snapshot.policies ?? { calendar: [], family: { byMember: [] } };
+      const urgent = Array.isArray(board.urgent) ? board.urgent : [];
+      const calendar = Array.isArray(policies.calendar) ? policies.calendar : [];
+      const family = policies.family ?? { byMember: [] };
+      const counts = board.counts ?? {};
+      const hasPolicies = num(counts.policies, 0) > 0;
+
+      /** 完成：记下「用户处理了」，不是「钱交了」。缴费类还要看缴费记录。 */
+      const markDone = (todo) => void writeSimple("/todos", { key: todo.key, status: "done" }, "todo.doneToast");
+      /** 稍后：推迟 7 天。 */
+      const snooze = (todo) => {
+        const next = new Date();
+        next.setDate(next.getDate() + 7);
+        void writeSimple(
+          "/todos",
+          { key: todo.key, status: "snoozed", snoozeUntil: dayKey(next) },
+          "todo.snoozeToast"
+        );
+      };
+
+      const maxCalendar = Math.max(1, ...calendar.map((entry) => entry.amount));
+
+      return [
+        // ① 顶部：主按钮 + 速览
+        jsx(Card, {
+          tone: "hero",
+          children: jsxs("div", {
+            className: "dshfw-wb__hero",
+            children: [
+              jsxs("div", {
+                className: "dshfw-wb__intro",
+                children: [
+                  jsx("h2", { className: "dshfw-wb__title", children: t("wb.title") }),
+                  jsx("p", {
+                    className: "dshfw-wb__sub",
+                    children: hasPolicies
+                      ? t("wb.sub", {
+                          n: String(counts.policies ?? 0),
+                          m: String(counts.members ?? 0),
+                          files: String(counts.attachments ?? 0)
+                        })
+                      : t("wb.subEmpty")
+                  })
+                ]
+              }),
+              jsxs("div", {
+                className: "dshfw-wb__actions",
+                children: [
+                  jsx(Button, {
+                    tone: "primary",
+                    icon: jsx(IconUpload, { size: 15 }),
+                    onClick: () => setScanning(true),
+                    label: t("wb.upload"),
+                    children: t("wb.upload")
+                  }),
+                  jsx(Button, { tone: "outline", onClick: () => setMemberForm(true), label: t("wb.addMember"), children: t("wb.addMember") })
+                ]
+              })
+            ]
+          })
+        }),
+        // ② 近期待办
+        jsx(Card, {
+          title: t("wb.todos"),
+          sub: urgent.length === 0 ? t("wb.todosClear") : t("wb.todosSub", { n: String(urgent.length) }),
+          children:
+            urgent.length === 0
+              ? jsx("p", { className: "dshfw-muted", children: hasPolicies ? t("wb.todosEmpty") : t("wb.todosNoPolicy") })
+              : jsx("ul", {
+                  className: "dshfw-todos",
+                  children: urgent.slice(0, 8).map((todo) => jsx(TodoRow, { key: todo.key, todo, onDone: markDone, onSnooze: snooze }))
+                })
+        }),
+        // ③ 家庭保单概览 + ④ 年度缴费日历
+        jsxs("div", {
+          className: "dshfw-grid dshfw-grid--2",
+          children: [
+            jsx(Card, {
+              title: t("wb.family"),
+              children:
+                (family.byMember ?? []).length === 0
+                  ? jsx("p", { className: "dshfw-muted", children: t("wb.familyEmpty") })
+                  : jsx("div", {
+                      className: "dshfw-family",
+                      children: (family.byMember ?? []).map((member) =>
+                        jsxs("div", {
+                          className: "dshfw-family__row",
+                          children: [
+                            jsx("span", { className: "dshfw-family__name", children: member.name }),
+                            jsx("span", { className: "dshfw-family__rel", children: t(`relation.${member.relation}`) }),
+                            jsxs("span", {
+                              className: "dshfw-family__meta dshfw-num",
+                              children: [
+                                t("wb.memberPolicies", { n: String(member.count) }),
+                                member.annualPremium > 0 ? ` · ${t("wb.annual", { amount: money(member.annualPremium, { decimals: 0 }) })}` : ""
+                              ]
+                            }),
+                            jsx("span", {
+                              className: "dshfw-family__coverage dshfw-num",
+                              children: member.coverage > 0 ? money(member.coverage, { decimals: 0 }) : "—"
+                            })
+                          ]
+                        })
+                      )
+                    })
+            }),
+            jsx(Card, {
+              title: t("wb.calendar"),
+              sub: t("wb.calendarSub"),
+              children:
+                calendar.length === 0
+                  ? jsx("p", { className: "dshfw-muted", children: t("wb.calendarEmpty") })
+                  : jsx("div", {
+                      className: "dshfw-cal",
+                      children: calendar.map((entry) =>
+                        jsx("div", {
+                          className: `dshfw-cal__col${entry.amount > 0 ? " has" : ""}`,
+                          title: `${entry.month} · ${money(entry.amount, { decimals: 0 })}`,
+                          children: [
+                            jsx("span", {
+                              className: "dshfw-cal__bar",
+                              style: { height: `${String(Math.max(entry.amount > 0 ? 6 : 0, (entry.amount / maxCalendar) * 100))}%` }
+                            }),
+                            jsx("span", { className: "dshfw-cal__label", children: entry.month.slice(5) })
+                          ]
+                        })
+                      )
+                    })
+            })
+          ]
+        }),
+        // ⑤ 档案不完整提示：识别之后有些字段没认出来，要显眼
+        num(counts.incomplete, 0) > 0
+          ? jsx(Card, {
+              children: jsxs("div", {
+                className: "dshfw-datanote",
+                children: [
+                  jsx("span", { className: "dshfw-datanote__icon", children: jsx(IconWarn, { size: 15 }) }),
+                  jsxs("span", {
+                    className: "dshfw-datanote__body",
+                    children: [
+                      jsx("b", { children: t("wb.incomplete", { n: String(counts.incomplete) }) }),
+                      ` ${t("wb.incompleteHint")}`
+                    ]
+                  })
+                ]
+              })
+            })
+          : null,
+        scanning ? jsx(PolicyScanDialog, { onClose: () => setScanning(false), onSaved: () => setScanning(false) }) : null,
+        memberForm
+          ? jsx(MemberForm, { onClose: () => setMemberForm(false), onSaved: () => setMemberForm(false) })
+          : null
+      ];
+    }
+
+    /** 添加家庭成员。 */
+    function MemberForm({ onClose, onSaved }) {
+      const [name, setName] = react.useState("");
+      const [relation, setRelation] = react.useState("spouse");
+      const [busy, setBusy] = react.useState(false);
+      const submit = async () => {
+        if (name.trim() === "") {
+          complain(new Error(t("wb.memberName")));
+          return;
+        }
+        setBusy(true);
+        try {
+          const saved = await writeSimple("/members", { op: "add", name: name.trim(), relation }, "toast.saved");
+          if (saved) {
+            onSaved?.();
+            onClose?.();
+          }
+        } finally {
+          setBusy(false);
+        }
+      };
+      return jsx(Dialog, {
+        label: t("wb.addMember"),
+        onClose,
+        children: [
+          jsx("h3", { className: "dshfw-dialog__title", children: t("wb.addMember") }),
+          jsxs("div", {
+            className: "dshfw-form dshfw-form--stack",
+            children: [
+              jsx(Field, { label: t("wb.memberName"), children: jsx(TextInput, { label: t("wb.memberName"), value: name, onChange: setName }) }),
+              jsx(Field, {
+                label: t("wb.relation"),
+                children: jsx(Select, {
+                  label: t("wb.relation"),
+                  value: relation,
+                  onChange: setRelation,
+                  options: RELATIONS.map((key) => ({ value: key, label: t(`relation.${key}`) }))
+                })
+              })
+            ]
+          }),
+          jsx("div", {
+            className: "dshfw-dialog__foot",
+            children: [
+              jsx(Button, { tone: "ghost", onClick: onClose, children: t("action.cancel") }),
+              jsx(Button, { tone: "primary", onClick: submit, disabled: busy, children: t("action.save") })
+            ]
+          })
+        ]
+      });
+    }
+
     // ── 保单 / 存款 / 理财 ────────────────────────────────────────────────
     /**
      * 保单编辑表单。
@@ -2451,7 +2889,10 @@ window.__ModuleLoader__.load({
               })
             ]
           }),
-          jsx("span", { className: "dshfw-policy-row__amount dshfw-num", children: money(item.amount, { decimals: 0 }) }),
+          jsx("span", {
+            className: "dshfw-policy-row__amount dshfw-num",
+            children: item.amount === null || item.amount === undefined ? t("policy.pending") : money(item.amount, { decimals: 0 })
+          }),
           jsx(IconButton, { label: t("action.edit"), onClick: () => onEdit(item), children: jsx(IconChevronRight, { size: 13 }) })
         ]
       });
@@ -2763,7 +3204,14 @@ window.__ModuleLoader__.load({
                         })
                       ]
                     }),
-                    jsx("span", { className: "dshfw-policy-row__amount dshfw-num", children: money(policy.kind === "insurance" ? policy.premium : policy.amount, { decimals: 0 }) }),
+                    jsx("span", {
+                      className: "dshfw-policy-row__amount dshfw-num",
+                      children: (() => {
+                        // null = 未知，显示「待补充」；0 = 已确认的零，照常显示
+                        const value = policy.kind === "insurance" ? policy.premium : policy.amount;
+                        return value === null || value === undefined ? t("policy.pending") : money(value, { decimals: 0 });
+                      })()
+                    }),
                     jsx(IconButton, { label: t("action.edit"), onClick: () => setForm({ record: policy }), children: jsx(IconChevronRight, { size: 13 }) }),
                     jsx(IconButton, { label: t("action.delete"), onClick: () => remove(policy.id), children: jsx(IconClose, { size: 13 }) })
                   ]
@@ -5028,7 +5476,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "policy.scanShowRaw": "查看识别到的原文",
       "policy.scanHideRaw": "收起原文",
       "policy.scanNoText": "没有识别到文本",
-      "policy.policyNo": "保单号"
+      "policy.policyNo": "保单号",
+      "policy.pending": "待补充"
     };
     /** English dictionary. */
     const DICT_EN = {
@@ -5358,7 +5807,8 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "policy.scanShowRaw": "Show recognised text",
       "policy.scanHideRaw": "Hide text",
       "policy.scanNoText": "No text recognised",
-      "policy.policyNo": "Policy number"
+      "policy.policyNo": "Policy number",
+      "policy.pending": "To fill in"
     };
 
     exports.apply = apply;
