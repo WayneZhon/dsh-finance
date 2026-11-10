@@ -1114,8 +1114,11 @@ const open = async (ledger, options = {}) => {
   const ui = fresh();
   let tree = await settlePage(ui);
   const wanted = options.tab ?? "flow";
-  if (wanted !== "board") {
-    press(tree, wanted === "flow" ? "收支" : wanted);
+  // 面板默认落在「工作台」，其余页都要点一下 tab 切过去
+  const TAB_LABELS = { workbench: "工作台", board: "总看板", flow: "收支", assets: "资产", policy: "保单", invest: "投资", plan: "规划" };
+  const label = TAB_LABELS[wanted] ?? wanted;
+  if (wanted !== "workbench") {
+    press(tree, label);
     tree = await settlePage(ui);
   }
   return { ui, tree };

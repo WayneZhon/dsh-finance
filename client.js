@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
     /** API root. */
     const API_BASE = "/dsh-finance/api";
     /** The four tabs, in display order. */
-    const TABS = Object.freeze(["board", "flow", "assets", "policy", "invest", "plan"]);
+    const TABS = Object.freeze(["workbench", "board", "flow", "assets", "policy", "invest", "plan"]);
     /** Expense categories (CONTRACT: shared with the Host). */
     const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "家庭", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
     /** Income is always this one category. */
@@ -887,7 +887,11 @@ window.__ModuleLoader__.load({
         count(snapshot.liabilities?.items) === 0 &&
         count(snapshot.invest?.items) === 0 &&
         count(snapshot.goals) === 0 &&
-        count(snapshot.monthsAvailable) === 0
+        count(snapshot.monthsAvailable) === 0 &&
+        // 保单也是账本的一部分：只有保单、没有流水的用户（典型场景：只想管保单）
+        // 不该被「还没有账本」的空状态挡住整个页面
+        count(snapshot.policies?.all) === 0 &&
+        count(snapshot.policies?.members) === 0
       );
     };
 
@@ -946,7 +950,7 @@ window.__ModuleLoader__.load({
         txns: [],
         /** Whether the previous load already had data (drives the skeleton). */
         everLoaded: false,
-        tab: "board",
+        tab: "workbench",
         /** Active category filter, shared by the donut legend and the table. */
         filterCategory: "",
         /** Live search text. */
@@ -4503,6 +4507,7 @@ window.__ModuleLoader__.load({
         body = jsx(EmptyState, {});
       } else {
         const panes = {
+          workbench: [jsx(WorkbenchPage, { snapshot })],
           board: [jsx(DashboardPage, { snapshot, onFilter })],
           flow: [jsx(StatStrip, { snapshot }), jsx("div", { className: "dshfw-grid dshfw-grid--2", children: [jsx(FlowTrend, { snapshot }), jsx(Card, { title: t("flow.top"), children: jsx(TopExpenses, { snapshot, onPick: onFilter }) })] }), jsx(FlowOverview, { snapshot, filter: state.filterCategory, onFilter }), jsx(FlowList, { snapshot })],
           assets: [jsx(AssetsPage, { snapshot })],
@@ -5049,6 +5054,48 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-rawtext{max-height:220px;overflow:auto;margin:0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent);font-family:${FONT_NUM};font-size:11.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}
 .dshfw-card__actions{display:flex;gap:8px}
 
+
+/* ── 工作台（首页）────────────────────────────────────────────────────── */
+.dshfw-wb__hero{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.dshfw-wb__intro{display:flex;flex-direction:column;gap:6px;min-width:0}
+.dshfw-wb__title{margin:0;font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--dsw-alias-label-primary)}
+.dshfw-wb__sub{margin:0;font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
+.dshfw-wb__actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* 待办 */
+.dshfw-todos{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
+.dshfw-todo{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.dshfw-todo:last-child{border-bottom:none}
+.dshfw-todo__dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dshfw-todo[data-tone="overdue"] .dshfw-todo__dot{background:var(--dsw-alias-state-error-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-error-primary) 20%,transparent)}
+.dshfw-todo[data-tone="today"] .dshfw-todo__dot{background:var(--dshfw-c0);box-shadow:0 0 0 3px color-mix(in srgb,var(--dshfw-c0) 22%,transparent)}
+.dshfw-todo[data-tone="soon"] .dshfw-todo__dot{background:var(--dshfw-c0);opacity:.6}
+.dshfw-todo__main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.dshfw-todo__title{display:flex;align-items:center;gap:7px;font-size:13.5px;line-height:1.35;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshfw-todo__kind{flex:none;padding:1px 6px;border-radius:5px;font-style:normal;font-size:10.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent)}
+.dshfw-todo[data-tone="overdue"] .dshfw-todo__kind{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
+.dshfw-todo__meta{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.dshfw-todo__when{flex:none;min-width:76px;text-align:right;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshfw-todo[data-tone="overdue"] .dshfw-todo__when{color:var(--dsw-alias-state-error-primary);font-weight:600}
+.dshfw-todo[data-tone="today"] .dshfw-todo__when{color:var(--dshfw-c0);font-weight:600}
+.dshfw-todo__actions{flex:none;display:flex;gap:6px}
+
+/* 家庭成员 */
+.dshfw-family{display:flex;flex-direction:column;gap:2px}
+.dshfw-family__row{display:flex;align-items:baseline;gap:10px;padding:10px 2px;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.dshfw-family__row:last-child{border-bottom:none}
+.dshfw-family__name{flex:none;min-width:64px;font-size:13.5px;color:var(--dsw-alias-label-primary)}
+.dshfw-family__rel{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.dshfw-family__meta{flex:1 1 auto;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.dshfw-family__coverage{flex:none;font-size:12.5px;color:var(--dsw-alias-label-primary)}
+
+/* 年度缴费日历 */
+.dshfw-cal{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;height:150px;align-items:end}
+.dshfw-cal__col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px;height:100%}
+.dshfw-cal__bar{width:60%;max-width:26px;min-height:0;border-radius:3px 3px 0 0;background:color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent)}
+.dshfw-cal__col.has .dshfw-cal__bar{background:var(--dshfw-accent);opacity:.85}
+.dshfw-cal__label{font-size:10.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+
 /* ── motion ─────────────────────────────────────────────────────────── */
 /* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来
    （被禁用、被容器裁剪、或渲染器提前截图），内容会永久停在 opacity:0 上。 */
@@ -5135,7 +5182,7 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       );
       // A fresh generation is a fresh page: it opens on this month, with no
       // filter, no half-finished wizard, nothing carried over.
-      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "board", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
+      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "workbench", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
       if (typeof ctx.effect === "function") {
         ctx.effect(() => () => {
           for (const dispose of disposers) {
@@ -5477,7 +5524,47 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "policy.scanHideRaw": "收起原文",
       "policy.scanNoText": "没有识别到文本",
       "policy.policyNo": "保单号",
-      "policy.pending": "待补充"
+      "policy.pending": "待补充",
+      "tab.workbench": "工作台",
+      "wb.title": "家庭保单管家",
+      "wb.sub": "{n} 份保单 · {m} 位成员 · {files} 份文件",
+      "wb.subEmpty": "先上传一份合同，或者把家里已有的保单补进来。",
+      "wb.upload": "上传保单",
+      "wb.addMember": "添加成员",
+      "wb.todos": "近期待办",
+      "wb.todosSub": "{n} 件要处理",
+      "wb.todosClear": "都处理完了",
+      "wb.todosEmpty": "接下来 30 天没有要处理的事。",
+      "wb.todosNoPolicy": "还没有保单。上传一份合同，或者先把已有的保单补进来。",
+      "wb.family": "家庭成员保障",
+      "wb.familyEmpty": "还没有成员。添加成员后可以把保单归属到人。",
+      "wb.memberPolicies": "{n} 份",
+      "wb.annual": "年缴 {amount}",
+      "wb.calendar": "年度缴费日历",
+      "wb.calendarSub": "未来 12 个月计划缴多少",
+      "wb.calendarEmpty": "还没有缴费计划。",
+      "wb.incomplete": "{n} 份保单档案还不完整",
+      "wb.incompleteHint": "缺保费、日期或保障内容，点进保单补充。",
+      "wb.memberName": "成员姓名",
+      "wb.relation": "关系",
+      "todo.kind.premium": "续期缴费",
+      "todo.kind.maturity": "到期处理",
+      "todo.kind.waiting": "等待期结束",
+      "todo.kind.grace": "犹豫期结束",
+      "todo.kind.checkup": "保单检查",
+      "todo.kind.claim": "理赔跟进",
+      "todo.done": "完成",
+      "todo.snooze": "稍后",
+      "todo.overdue": "已逾期 {n} 天",
+      "todo.today": "今天",
+      "todo.inDays": "还剩 {n} 天",
+      "todo.doneToast": "已标记处理",
+      "todo.snoozeToast": "已推迟 7 天",
+      "relation.self": "本人",
+      "relation.spouse": "配偶",
+      "relation.child": "子女",
+      "relation.parent": "父母",
+      "relation.other": "其他"
     };
     /** English dictionary. */
     const DICT_EN = {
@@ -5808,7 +5895,47 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "policy.scanHideRaw": "Hide text",
       "policy.scanNoText": "No text recognised",
       "policy.policyNo": "Policy number",
-      "policy.pending": "To fill in"
+      "policy.pending": "To fill in",
+      "tab.workbench": "Home",
+      "wb.title": "Family policy desk",
+      "wb.sub": "{n} policies · {m} members · {files} files",
+      "wb.subEmpty": "Upload a contract, or add the policies you already have.",
+      "wb.upload": "Upload policy",
+      "wb.addMember": "Add member",
+      "wb.todos": "Upcoming",
+      "wb.todosSub": "{n} to handle",
+      "wb.todosClear": "All clear",
+      "wb.todosEmpty": "Nothing to handle in the next 30 days.",
+      "wb.todosNoPolicy": "No policies yet. Upload a contract or add what you already have.",
+      "wb.family": "Coverage by member",
+      "wb.familyEmpty": "No members yet. Add one to assign policies.",
+      "wb.memberPolicies": "{n} policies",
+      "wb.annual": "{amount}/yr",
+      "wb.calendar": "Premium calendar",
+      "wb.calendarSub": "Planned for the next 12 months",
+      "wb.calendarEmpty": "No premium plan yet.",
+      "wb.incomplete": "{n} policies are incomplete",
+      "wb.incompleteHint": "Missing premium, dates or coverage — open one to fill it in.",
+      "wb.memberName": "Member name",
+      "wb.relation": "Relation",
+      "todo.kind.premium": "Premium due",
+      "todo.kind.maturity": "Maturity",
+      "todo.kind.waiting": "Waiting period ends",
+      "todo.kind.grace": "Cooling-off ends",
+      "todo.kind.checkup": "Policy review",
+      "todo.kind.claim": "Claim follow-up",
+      "todo.done": "Done",
+      "todo.snooze": "Later",
+      "todo.overdue": "{n} days overdue",
+      "todo.today": "Today",
+      "todo.inDays": "in {n} days",
+      "todo.doneToast": "Marked as handled",
+      "todo.snoozeToast": "Snoozed for 7 days",
+      "relation.self": "Self",
+      "relation.spouse": "Spouse",
+      "relation.child": "Child",
+      "relation.parent": "Parent",
+      "relation.other": "Other"
     };
 
     exports.apply = apply;
