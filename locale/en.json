@@ -368,5 +368,13 @@
   "board.upcoming": "Upcoming",
   "board.todoSub": "{n} to handle",
   "board.todoEmpty": "Nothing to handle in the next 30 days.",
-  "board.familyCoverage": "Coverage by member"
+  "board.familyCoverage": "Coverage by member",
+  "board.totalAssets": "Total assets",
+  "board.lessDebt": "minus {amount} debt",
+  "board.noDebt": "No debt",
+  "board.coverageFoot": "{n} policies · not counted as assets",
+  "board.distribution": "Where the money is",
+  "board.distributionSub": "How your assets are split",
+  "board.viewDetail": "Details",
+  "board.insuranceNotAsset": "Plus {n} insurance policies with {amount} cover — cover is a claim condition, not spendable money, so it is not counted as an asset."
 }

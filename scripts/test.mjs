@@ -398,6 +398,7 @@ const snapshotOf = (ledger, month, now) => {
     dataNotes: [],
     policies: snapshotPolicies(ledger),
     workbench: snapshotWorkbench(ledger),
+    assetBreakdown: snapshotAssets(ledger),
     yearly: {
       year: month.slice(0, 4),
       income,
@@ -463,6 +464,32 @@ const snapshotPolicies = (ledger) => {
     })(),
     members: (Array.isArray(ledger.members) ? ledger.members : []).map((member) => ({ ...member })),
     payments: (Array.isArray(ledger.payments) ? ledger.payments : []).map((payment) => ({ ...payment }))
+  };
+};
+
+/** 资产分布：与真 Host 同口径 —— 持仓与存款算资产，保险保额不算。 */
+const snapshotAssets = (ledger) => {
+  const assets = Array.isArray(ledger.assets) ? ledger.assets : [];
+  const holdings = Array.isArray(ledger.holdings) ? ledger.holdings : [];
+  const policies = Array.isArray(ledger.policies) ? ledger.policies : [];
+  const sum = (list, pick) => list.reduce((acc, item) => acc + (Number(pick(item)) || 0), 0);
+  const cashFromAssets = sum(assets.filter((a) => a.kind === "cash"), (a) => a.value);
+  const deposits = policies.filter((p) => p.kind === "deposit" || p.kind === "wealth");
+  const depositPrincipal = sum(deposits, (p) => p.amount);
+  const holdingsValue = sum(holdings, (h) => (Number(h.shares) || 0) * (Number(h.price) || 0));
+  const property = sum(assets.filter((a) => a.kind === "property"), (a) => a.value);
+  const rows = [];
+  if (cashFromAssets + depositPrincipal > 0) rows.push({ key: "cash", label: "现金与存款", amount: cashFromAssets + depositPrincipal, detail: "" });
+  if (holdingsValue > 0) rows.push({ key: "market", label: "股票与基金", amount: holdingsValue, detail: "" });
+  if (property > 0) rows.push({ key: "property", label: "房产", amount: property, detail: "" });
+  const total = sum(rows, (r) => r.amount);
+  const insurance = policies.filter((p) => p.kind === "insurance");
+  return {
+    total,
+    liabilitiesTotal: sum(Array.isArray(ledger.liabilities) ? ledger.liabilities : [], (l) => l.balance),
+    rows: rows.map((row) => ({ ...row, share: total > 0 ? Math.round((row.amount / total) * 1000) / 10 : 0 })).sort((a, b) => b.amount - a.amount),
+    insurance: { count: insurance.length, coverage: sum(insurance, (p) => p.amount), annualPremium: sum(insurance, (p) => p.premium) },
+    warnings: []
   };
 };
 
@@ -1911,7 +1938,7 @@ test("the overview shows net worth, coverage and todo counts at a glance", async
   ];
   const { tree } = await open(() => ledger, { tab: "board" });
   const stats = byClass(tree, "dshfw-quickstat");
-  assert.equal(stats.length, 3, "净资产 / 家庭保障 / 待处理");
+  assert.equal(stats.length, 4, "净资产 / 总资产 / 家庭保障 / 待处理");
   const text = textOf(tree);
   assert.match(text, /净资产/, "净资产一栏");
   assert.match(text, /家庭保障/, "保障一栏");
@@ -1936,8 +1963,8 @@ test("clicking the policy stat switches to the policies tab", async () => {
   ledger.policies = [{ id: "pol1", kind: "insurance", name: "平安重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
   const { ui, tree } = await open(() => ledger, { tab: "board" });
   const stats = byClass(tree, "dshfw-quickstat");
-  // 第二张是「家庭保障」
-  fire(stats[1]);
+  // 第三张是「家庭保障」
+  fire(stats[2]);
   const next = await settlePage(ui);
   assert.match(textOf(next), /到期与续保提醒/, "跳到了保单页");
 });
@@ -1947,6 +1974,48 @@ test("a ledger with policies but no transactions still renders the overview", as
   ledger.policies = [{ id: "pol1", kind: "insurance", name: "平安重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
   const { tree } = await open(() => ledger, { tab: "board" });
   assert.doesNotMatch(textOf(tree), /还没有账本/, "有保单就不该显示空账本引导");
+});
+
+
+test("assets include holdings and deposits but never insurance cover", async () => {
+  const ledger = emptyLedger();
+  ledger.assets = [{ id: "a1", name: "招行活期", kind: "cash", value: 1_850_000 }];
+  ledger.holdings = [{ id: "h1", name: "招商银行", type: "stock", shares: 1000, costPrice: 3450, price: 3800 }];
+  ledger.policies = [
+    { id: "p1", kind: "deposit", name: "三年定期", amount: 10_000_000, payCycle: "once", dueDate: "2027-03-01" },
+    { id: "p2", kind: "insurance", name: "重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const text = textOf(tree);
+  // 现金 1.85 万 + 定期 10 万 + 持仓 3.8 万 = 15.65 万
+  assert.match(text, /156,500/, "资产合计含活期、定期与持仓");
+  // 保险保额不能出现在资产合计里
+  assert.doesNotMatch(text, /656,500/, "保额没有被算进资产");
+  assert.match(text, /不计入资产/, "明确说明保额不计入");
+  // 分布里三类都在
+  assert.match(text, /现金与存款/, "现金与存款");
+  assert.match(text, /股票与基金/, "股票与基金");
+});
+
+test("the asset distribution lists property and shares when both exist", async () => {
+  const ledger = emptyLedger();
+  ledger.assets = [
+    { id: "a1", name: "自住房", kind: "property", value: 180_000_000 },
+    { id: "a2", name: "活期", kind: "cash", value: 2_000_000 },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const text = textOf(tree);
+  assert.match(text, /房产/, "房产一类");
+  assert.match(text, /98\.9%/, "房产占比按 180 万 / 182 万");
+});
+
+test("a ledger with policies but no assets shows no distribution card", async () => {
+  // 有保单就不算空账本，会正常渲染总看板；但没资产就没有分布卡
+  const ledger = emptyLedger();
+  ledger.policies = [{ id: "p1", kind: "insurance", name: "重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  assert.equal(byClass(tree, "dshfw-dist").length, 0, "没有资产就不显示分布");
+  assert.equal(byClass(tree, "dshfw-quickstat").length, 4, "速览仍然在");
 });
 
 test("a real ledger never shows the demo notice", async () => {

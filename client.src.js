@@ -729,6 +729,31 @@ window.__ModuleLoader__.load({
               : []
           };
         })(),
+        // 资产分布：保额不计入资产，由 Host 算好口径
+        assetBreakdown: (() => {
+          const source = record.assetBreakdown !== null && typeof record.assetBreakdown === "object" ? record.assetBreakdown : {};
+          return {
+            total: fen(source.total),
+            liabilitiesTotal: fen(source.liabilitiesTotal),
+            rows: Array.isArray(source.rows)
+              ? source.rows
+                  .filter((row) => row !== null && typeof row === "object")
+                  .map((row) => ({
+                    key: String(row.key ?? ""),
+                    label: String(row.label ?? ""),
+                    amount: fen(row.amount),
+                    share: num(row.share, 0),
+                    detail: String(row.detail ?? "")
+                  }))
+              : [],
+            insurance: {
+              count: num(source.insurance?.count, 0),
+              coverage: fen(source.insurance?.coverage),
+              annualPremium: fen(source.insurance?.annualPremium)
+            },
+            warnings: Array.isArray(source.warnings) ? source.warnings.map(String) : []
+          };
+        })(),
         // 工作台：先回答「我现在要做什么」
         workbench: (() => {
           const source = record.workbench !== null && typeof record.workbench === "object" ? record.workbench : {};
@@ -3920,9 +3945,8 @@ window.__ModuleLoader__.load({
       const totalBudget = (Array.isArray(snapshot.budgets) ? snapshot.budgets : []).find((row) => row.category === "__total__") ?? null;
       // 总看板上要能看到保单与待办——但只放「要处理的」，不做第二个保单页
       const urgentTodos = Array.isArray(snapshot.workbench?.urgent) ? snapshot.workbench.urgent : [];
-      const policiesTotalCoverage = (snapshot.policies?.all ?? [])
-        .filter((policy) => policy.kind === "insurance" && policy.amount !== null && policy.amount !== undefined)
-        .reduce((acc, policy) => acc + policy.amount, 0);
+      // 资产分布由 Host 统一口径（保险不计入）
+      const assets = snapshot.assetBreakdown ?? { total: 0, rows: [], insurance: { count: 0, coverage: 0 }, liabilitiesTotal: 0, warnings: [] };
       return jsxs("div", {
         className: "dshfw-board",
         children: [
@@ -3980,10 +4004,10 @@ window.__ModuleLoader__.load({
               })
             ]
           }),
-          // ①.2 速览：净资产、家庭保障、待办。总看板要「一眼看全」，
-          //     所以收支之外的三件事也放在首屏，且都能点进去看明细。
+          // ①.2 速览：净资产、总资产、保障、待办。总看板要「一眼看全」，
+          //     收支之外的四件事也放在首屏，且都能点进去看明细。
           jsxs("section", {
-            className: "dshfw-quick3",
+            className: "dshfw-quick4",
             children: [
               jsx(QuickStat, {
                 label: t("board.netWorth"),
@@ -3993,26 +4017,85 @@ window.__ModuleLoader__.load({
                 onClick: () => onTab?.("assets")
               }),
               jsx(QuickStat, {
+                label: t("board.totalAssets"),
+                value: money(assets.total, { decimals: 0 }),
+                foot: assets.liabilitiesTotal > 0
+                  ? t("board.lessDebt", { amount: money(assets.liabilitiesTotal, { decimals: 0 }) })
+                  : t("board.noDebt"),
+                onClick: () => onTab?.("assets")
+              }),
+              jsx(QuickStat, {
                 label: t("board.coverage"),
-                value: (snapshot.policies?.all ?? []).length === 0
-                  ? "—"
-                  : money(policiesTotalCoverage, { decimals: 0 }),
-                foot: (snapshot.policies?.all ?? []).length === 0
+                value: assets.insurance.count === 0 ? "—" : money(assets.insurance.coverage, { decimals: 0 }),
+                foot: assets.insurance.count === 0
                   ? t("board.noPolicy")
-                  : t("board.policyCount", { n: String((snapshot.policies?.all ?? []).length) }),
+                  : t("board.coverageFoot", { n: String(assets.insurance.count) }),
                 onClick: () => onTab?.("policy")
               }),
               jsx(QuickStat, {
                 label: t("board.todos"),
                 value: urgentTodos.length === 0 ? t("board.todoNone") : String(urgentTodos.length),
-                foot: urgentTodos.length === 0
-                  ? t("board.todoClearFoot")
-                  : urgentTodos[0].title,
+                foot: urgentTodos.length === 0 ? t("board.todoClearFoot") : urgentTodos[0].title,
                 tone: urgentTodos.some((todo) => todo.bucket === "overdue") ? "negative" : "default",
                 onClick: () => onTab?.("policy")
               })
             ]
           }),
+          // ①.25 资产分布：钱分在哪些形态里。保险不计入（保额不是钱）
+          assets.rows.length > 0
+            ? jsx(Card, {
+                title: t("board.distribution"),
+                sub: t("board.distributionSub"),
+                actions: jsx(Button, {
+                  tone: "ghost",
+                  size: "sm",
+                  onClick: () => onTab?.("assets"),
+                  label: t("board.viewDetail"),
+                  children: t("board.viewDetail")
+                }),
+                children: jsxs("div", {
+                  className: "dshfw-dist",
+                  children: [
+                    jsx("div", {
+                      className: "dshfw-dist__bar",
+                      children: assets.rows.map((row, index) =>
+                        jsx("span", {
+                          className: "dshfw-dist__seg",
+                          "data-key": row.key,
+                          style: { width: `${String(Math.max(row.share, 0.8))}%` },
+                          title: `${row.label} · ${money(row.amount, { decimals: 0 })}（${row.share}%）`,
+                          "data-i": String(index)
+                        })
+                      )
+                    }),
+                    jsx("div", {
+                      className: "dshfw-dist__legend",
+                      children: assets.rows.map((row, index) =>
+                        jsxs("div", {
+                          className: "dshfw-dist__item",
+                          "data-key": row.key,
+                          children: [
+                            jsx("span", { className: "dshfw-dist__dot", "data-i": String(index) }),
+                            jsx("span", { className: "dshfw-dist__label", children: row.label }),
+                            jsx("span", { className: "dshfw-dist__share dshfw-num", children: `${row.share}%` }),
+                            jsx("span", { className: "dshfw-dist__amount dshfw-num", children: money(row.amount, { decimals: 0 }) })
+                          ]
+                        })
+                      )
+                    }),
+                    assets.insurance.count > 0
+                      ? jsx("p", {
+                          className: "dshfw-dist__note",
+                          children: t("board.insuranceNotAsset", {
+                            amount: money(assets.insurance.coverage, { decimals: 0 }),
+                            n: String(assets.insurance.count)
+                          })
+                        })
+                      : null
+                  ]
+                })
+              })
+            : null,
           // ①.3 近期待办 + 家庭保障：保单与资产在总看板上要能被看到
           (urgentTodos.length > 0 || (snapshot.policies?.family?.byMember ?? []).length > 0)
             ? jsxs("div", {
@@ -5016,6 +5099,33 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-quickstat__value{font-size:21px;line-height:1.25;letter-spacing:-.02em;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
 .dshfw-quickstat[data-tone="negative"] .dshfw-quickstat__value{color:var(--dsw-alias-state-error-primary)}
 .dshfw-quickstat__foot{font-size:11.5px;line-height:1.4;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+
+/* ── 总看板：资产分布 ─────────────────────────────────────────────────── */
+.dshfw-quick4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:960px){.dshfw-quick4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.dshfw-quick4{grid-template-columns:minmax(0,1fr)}}
+.dshfw-dist{display:flex;flex-direction:column;gap:14px}
+.dshfw-dist__bar{display:flex;width:100%;height:12px;border-radius:6px;overflow:hidden;background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent)}
+.dshfw-dist__seg{height:100%;transition:opacity .14s ease}
+.dshfw-dist__seg[data-i="0"]{background:var(--dshfw-c0)}
+.dshfw-dist__seg[data-i="1"]{background:var(--dshfw-c1,var(--dshfw-c0));opacity:.82}
+.dshfw-dist__seg[data-i="2"]{background:var(--dshfw-c2,var(--dshfw-c0));opacity:.66}
+.dshfw-dist__seg[data-i="3"]{background:var(--dshfw-c3,var(--dshfw-c0));opacity:.5}
+.dshfw-dist__seg[data-i="4"]{background:var(--dshfw-c4,var(--dshfw-c0));opacity:.38}
+.dshfw-dist__seg[data-i="5"]{background:var(--dshfw-c5,var(--dshfw-c0));opacity:.28}
+.dshfw-dist__legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 20px}
+.dshfw-dist__item{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
+.dshfw-dist__dot{flex:none;width:7px;height:7px;border-radius:2px;background:var(--dshfw-c0)}
+.dshfw-dist__item[data-key] .dshfw-dist__dot[data-i="1"]{background:var(--dshfw-c1,var(--dshfw-c0));opacity:.82}
+.dshfw-dist__item[data-key] .dshfw-dist__dot[data-i="2"]{background:var(--dshfw-c2,var(--dshfw-c0));opacity:.66}
+.dshfw-dist__item[data-key] .dshfw-dist__dot[data-i="3"]{background:var(--dshfw-c3,var(--dshfw-c0));opacity:.5}
+.dshfw-dist__item[data-key] .dshfw-dist__dot[data-i="4"]{background:var(--dshfw-c4,var(--dshfw-c0));opacity:.38}
+.dshfw-dist__item[data-key] .dshfw-dist__dot[data-i="5"]{background:var(--dshfw-c5,var(--dshfw-c0));opacity:.28}
+.dshfw-dist__label{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshfw-dist__share{flex:none;min-width:42px;text-align:right;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.dshfw-dist__amount{flex:none;min-width:88px;text-align:right;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.dshfw-dist__note{margin:0;font-size:11.5px;line-height:1.6;color:var(--dsw-alias-label-tertiary)}
 
 /* ── motion ─────────────────────────────────────────────────────────── */
 /* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来

@@ -368,5 +368,13 @@
   "board.upcoming": "近期待办",
   "board.todoSub": "{n} 件要处理",
   "board.todoEmpty": "接下来的 30 天没有要处理的事。",
-  "board.familyCoverage": "家庭成员保障"
+  "board.familyCoverage": "家庭成员保障",
+  "board.totalAssets": "总资产",
+  "board.lessDebt": "减负债 {amount}",
+  "board.noDebt": "没有负债",
+  "board.coverageFoot": "{n} 份保单 · 不计入资产",
+  "board.distribution": "资产分布",
+  "board.distributionSub": "钱放在哪些形态里",
+  "board.viewDetail": "看明细",
+  "board.insuranceNotAsset": "另有 {n} 份保险，保额合计 {amount} —— 保额是理赔条件，不是现在能动的钱，所以不计入资产。"
 }
