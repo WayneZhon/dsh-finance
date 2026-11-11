@@ -322,10 +322,11 @@ const snapshotOf = (ledger, month, now) => {
   const byKind = [...kindMap.entries()].map(([kind, amount]) => ({ kind, amount, share: assetTotal > 0 ? amount / assetTotal : 0 })).sort((a, b) => b.amount - a.amount);
   const liabTotal = ledger.liabilities.reduce((total, item) => total + item.balance, 0);
   const day = (stamp) => new RealDate(stamp).getDate();
+  const DEBT_LABELS = { mortgage: "房贷", car: "车贷", credit: "信用卡", consumer: "消费贷", other: "其他负债" };
   const liabilities = ledger.liabilities.map((item) => {
     const today = day(now);
     const dueInDays = item.dueDay >= today ? item.dueDay - today : 30 + item.dueDay - today;
-    return { ...item, dueInDays, overdue: false };
+    return { ...item, kindLabel: DEBT_LABELS[item.kind] ?? "其他负债", dueInDays, overdue: false };
   });
   const netWorth = assetTotal - liabTotal;
   let anchor = netWorth;
@@ -386,7 +387,25 @@ const snapshotOf = (ledger, month, now) => {
     trend,
     topExpenses,
     assets: { total: assetTotal, byKind, items: ledger.assets },
-    liabilities: { total: liabTotal, items: liabilities, upcoming: liabilities.filter((item) => item.monthlyPayment > 0 && item.dueInDays <= 30) },
+    liabilities: (() => {
+      const debtRows = new Map();
+      for (const item of liabilities) {
+        const bucket = debtRows.get(item.kind) ?? { kind: item.kind, label: item.kindLabel, balance: 0, monthlyPayment: 0, count: 0 };
+        bucket.balance += item.balance;
+        bucket.monthlyPayment += item.monthlyPayment;
+        bucket.count += 1;
+        debtRows.set(item.kind, bucket);
+      }
+      return {
+        total: liabTotal,
+        items: liabilities,
+        upcoming: liabilities.filter((item) => item.monthlyPayment > 0 && item.dueInDays <= 30),
+        byKind: [...debtRows.values()]
+          .map((row) => ({ ...row, share: liabTotal > 0 ? Math.round((row.balance / liabTotal) * 1000) / 10 : 0 }))
+          .sort((a, b) => b.balance - a.balance),
+        monthlyTotal: liabilities.reduce((acc, item) => acc + item.monthlyPayment, 0)
+      };
+    })(),
     netWorth,
     netWorthTrend,
     invest: { cost, value, pnl: value - cost, pnlRate: cost > 0 ? (value - cost) / cost : 0, byType, items: holdings },
@@ -756,6 +775,20 @@ const fetchStub = async (url, init = {}) => {
     if (/保险|保单|保费|保额|重疾|续保|存款|定期|理财|到期|年化|利率|险/u.test(text)) {
       return ok({ intent: "policy", value: { kind: "insurance", name: "平安重疾险", premium: 486000, dueDate: "2027-12-15" } });
     }
+    if (/房贷|车贷|信用卡|花呗|借呗|白条|欠款|负债|贷款|月供|还欠|按揭/u.test(text) && !/还了|还款了|交了|付了|扣了/u.test(text)) {
+      const balance = /(\d+(?:\.\d+)?)\s*万/u.exec(text);
+      const monthly = /(?:月供|每月还)\s*(\d+(?:\.\d+)?)/u.exec(text);
+      return ok({
+        intent: "liability",
+        value: {
+          kind: /房贷|按揭/u.test(text) ? "mortgage" : /车贷/u.test(text) ? "car" : "credit",
+          name: /房贷|按揭/u.test(text) ? "房贷" : /车贷/u.test(text) ? "车贷" : "信用卡",
+          balance: balance === null ? null : Math.round(Number(balance[1]) * 1000000),
+          monthlyPayment: monthly === null ? null : Math.round(Number(monthly[1]) * 100),
+          dueDay: null
+        }
+      });
+    }
     if (/股|基金/u.test(text)) {
       return ok({ intent: "holding", value: { name: "招商银行", type: "stock", shares: 1000, costPrice: 3450, price: 3800 } });
     }
@@ -769,6 +802,7 @@ const fetchStub = async (url, init = {}) => {
     if (intent === "policy") host.ledger.policies = [...(host.ledger.policies ?? []), { id: nextId("pol"), ...value }];
     else if (intent === "asset") host.ledger.assets = [...host.ledger.assets, { id: nextId("ast"), ...value }];
     else if (intent === "holding") host.ledger.holdings = [...host.ledger.holdings, { id: nextId("hold"), ...value }];
+    else if (intent === "liability") host.ledger.liabilities = [...(host.ledger.liabilities ?? []), { id: nextId("liab"), ...value }];
     return ok({ intent, item: value, snapshot: snapshotOf(host.ledger, "2026-11", clock.now) });
   }
   if (path === `${API}/export` && method === "GET") {
@@ -2016,6 +2050,59 @@ test("a ledger with policies but no assets shows no distribution card", async ()
   const { tree } = await open(() => ledger, { tab: "board" });
   assert.equal(byClass(tree, "dshfw-dist").length, 0, "没有资产就不显示分布");
   assert.equal(byClass(tree, "dshfw-quickstat").length, 4, "速览仍然在");
+});
+
+
+test("the overview breaks debt down by kind with monthly payments", async () => {
+  const ledger = emptyLedger();
+  ledger.assets = [{ id: "a1", name: "自住房", kind: "property", value: 180_000_000 }];
+  ledger.liabilities = [
+    { id: "l1", name: "房贷", kind: "mortgage", balance: 96_000_000, monthlyPayment: 680_000, dueDay: 15 },
+    { id: "l2", name: "车贷", kind: "car", balance: 8_000_000, monthlyPayment: 220_000, dueDay: 5 },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const text = textOf(tree);
+  assert.match(text, /负债构成/, "负债区块");
+  assert.match(text, /房贷/, "房贷一行");
+  assert.match(text, /车贷/, "车贷一行");
+  assert.match(text, /月供 ¥6,800/, "月供按笔显示");
+  // 净资产 = 180 万 - 104 万
+  assert.match(text, /760,000/, "净资产扣掉负债");
+});
+
+test("debt is hidden when the ledger has none", async () => {
+  const ledger = emptyLedger();
+  ledger.policies = [{ id: "p1", kind: "insurance", name: "重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  assert.doesNotMatch(textOf(tree), /负债构成/, "没有负债就不显示");
+});
+
+test("typing a mortgage sentence records a liability, not an expense", async () => {
+  const { ui, tree } = await open();
+  typeInto(tree, "随手记一笔", "房贷还剩96万，每月还6800");
+  const typed = await settlePage(ui);
+  assert.match(textOfClass(typed, "dshfw-quick__hint")[0] ?? "", /负债/, "提示识别为负债");
+  press(typed, "记下");
+  await flush(ui);
+  const commits = callsTo("/parse/commit");
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0].body.intent, "liability");
+  assert.equal(commits[0].body.value.balance, 96_000_000);
+  assert.equal(commits[0].body.value.monthlyPayment, 680_000);
+  // 绝不能同时写成一笔 96 万的支出
+  assert.equal(callsTo("/txns").filter((call) => call.method !== "GET").length, 0, "没有写成流水");
+});
+
+test("paying a mortgage instalment is still an expense", async () => {
+  const { ui, tree } = await open();
+  typeInto(tree, "随手记一笔", "还了6800房贷");
+  const typed = await settlePage(ui);
+  // 带支付动词 → 走流水，不进负债
+  assert.doesNotMatch(textOfClass(typed, "dshfw-quick__hint")[0] ?? "", /负债/);
+  press(typed, "记下");
+  await flush(ui);
+  assert.equal(callsTo("/txns").filter((call) => call.method !== "GET").length, 1, "写成一笔流水");
+  assert.equal(callsTo("/parse/commit").length, 0, "不走建档");
 });
 
 test("a real ledger never shows the demo notice", async () => {

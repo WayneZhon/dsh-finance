@@ -148,6 +148,11 @@ window.__ModuleLoader__.load({
       if (has(["股", "基金", "etf", "持仓", "成本", "份额", "建仓"])) {
         return /花了|支付|消费/u.test(source) ? "txn" : "holding";
       }
+      // 负债：「房贷还剩96万」「月供6800」是在说欠款，不是这个月花了 96 万
+      if (has(["房贷", "车贷", "信用卡", "花呗", "借呗", "白条", "欠款", "负债", "贷款", "月供", "还欠", "按揭", "消费贷"])) {
+        // 「还了6800房贷」是真实支出，仍然走流水
+        return /还了|还款了|交了|付了|扣了/u.test(source) ? "txn" : "liability";
+      }
       // 资产
       if (has(["活期", "余额有", "房产", "房子值", "公积金", "账户有", "现金有", "估值"])) return "asset";
       return "txn";
@@ -522,7 +527,23 @@ window.__ModuleLoader__.load({
         : [];
       const total = record.total === undefined ? items.reduce((sum, item) => sum + item.balance, 0) : fen(record.total);
       const upcoming = Array.isArray(record.upcoming) ? record.upcoming.map((entry) => ({ id: String(entry?.id ?? ""), name: String(entry?.name ?? ""), dueInDays: num(entry?.dueInDays, 0), amount: fen(entry?.amount ?? entry?.monthlyPayment) })) : [];
-      return { total, items, upcoming };
+      // 负债按类型分组：房贷 / 车贷 / 信用卡 ……「欠多少」和「欠谁的」是两件事
+      const byKind = Array.isArray(record.byKind)
+        ? record.byKind
+            .filter((row) => row !== null && typeof row === "object")
+            .map((row) => ({
+              kind: LIABILITY_KINDS.includes(row.kind) ? row.kind : "other",
+              label: String(row.label ?? ""),
+              balance: fen(row.balance),
+              monthlyPayment: fen(row.monthlyPayment),
+              count: num(row.count, 0),
+              share: num(row.share, 0)
+            }))
+        : [];
+      const monthlyTotal = record.monthlyTotal === undefined
+        ? items.reduce((sum, item) => sum + item.monthlyPayment, 0)
+        : fen(record.monthlyTotal);
+      return { total, items, upcoming, byKind, monthlyTotal };
     };
     /** Holdings and their aggregate. */
     const normalizeInvest = (raw) => {
@@ -3947,6 +3968,8 @@ window.__ModuleLoader__.load({
       const urgentTodos = Array.isArray(snapshot.workbench?.urgent) ? snapshot.workbench.urgent : [];
       // 资产分布由 Host 统一口径（保险不计入）
       const assets = snapshot.assetBreakdown ?? { total: 0, rows: [], insurance: { count: 0, coverage: 0 }, liabilitiesTotal: 0, warnings: [] };
+      const debts = snapshot.liabilities ?? { total: 0, items: [], byKind: [], monthlyTotal: 0, upcoming: [] };
+      const debtRatio = assets.total + debts.total > 0 ? Math.round((debts.total / (assets.total + debts.total)) * 1000) / 10 : 0;
       return jsxs("div", {
         className: "dshfw-board",
         children: [
@@ -4173,6 +4196,73 @@ window.__ModuleLoader__.load({
                 ]
               })
             : null,
+          // ①.27 负债构成：欠多少、欠谁的、每月要还多少
+          debts.total > 0
+            ? jsx(Card, {
+                title: t("board.debtTitle"),
+                sub: t("board.debtSub", {
+                  total: money(debts.total, { decimals: 0 }),
+                  monthly: money(debts.monthlyTotal, { decimals: 0 })
+                }),
+                actions: jsx(Button, {
+                  tone: "ghost",
+                  size: "sm",
+                  onClick: () => onTab?.("assets"),
+                  label: t("board.viewDetail"),
+                  children: t("board.viewDetail")
+                }),
+                children: jsxs("div", {
+                  className: "dshfw-dist",
+                  children: [
+                    jsx("div", {
+                      className: "dshfw-dist__bar dshfw-dist__bar--debt",
+                      children: debts.byKind.map((row, index) =>
+                        jsx("span", {
+                          className: "dshfw-dist__seg",
+                          "data-key": row.kind,
+                          style: { width: `${String(Math.max(row.share, 0.8))}%` },
+                          title: `${row.label} · ${money(row.balance, { decimals: 0 })}（${row.share}%）`,
+                          "data-i": String(index)
+                        })
+                      )
+                    }),
+                    jsx("div", {
+                      className: "dshfw-dist__legend",
+                      children: debts.byKind.map((row, index) =>
+                        jsxs("div", {
+                          className: "dshfw-dist__item",
+                          "data-key": row.kind,
+                          children: [
+                            jsx("span", { className: "dshfw-dist__dot", "data-i": String(index) }),
+                            jsx("span", { className: "dshfw-dist__label", children: row.label }),
+                            jsx("span", {
+                              className: "dshfw-dist__share dshfw-num",
+                              children: row.monthlyPayment > 0
+                                ? t("board.debtMonthly", { amount: money(row.monthlyPayment, { decimals: 0 }) })
+                                : `${row.share}%`
+                            }),
+                            jsx("span", { className: "dshfw-dist__amount dshfw-num", children: money(row.balance, { decimals: 0 }) })
+                          ]
+                        })
+                      )
+                    }),
+                    // 负债率：欠款 / (资产 + 欠款)，比单看余额更能说明压力
+                    jsx("p", {
+                      className: "dshfw-dist__note",
+                      children: t("board.debtRatio", {
+                        ratio: `${String(debtRatio)}%`,
+                        next: debts.upcoming.length > 0
+                          ? t("board.debtNext", {
+                              name: debts.upcoming[0].name,
+                              days: String(debts.upcoming[0].dueInDays)
+                            })
+                          : ""
+                      })
+                    })
+                  ]
+                })
+              })
+            : null,
           // ①.5 数据完整性提醒：先于图表出现，避免用户先被数字吓到
           (Array.isArray(snapshot.dataNotes) ? snapshot.dataNotes : []).map((note, index) =>
             jsxs("div", {
@@ -4394,7 +4484,13 @@ window.__ModuleLoader__.load({
                 date: parsed.date.slice(5)
               }))
             : t(
-                kind === "policy" ? "quick.kindPolicy" : kind === "holding" ? "quick.kindHolding" : "quick.kindAsset"
+                kind === "liability"
+                  ? "quick.kindLiability"
+                  : kind === "policy"
+                    ? "quick.kindPolicy"
+                    : kind === "holding"
+                      ? "quick.kindHolding"
+                      : "quick.kindAsset"
               );
       return jsx("div", {
         className: "dshfw-quick",
@@ -5127,6 +5223,14 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-dist__amount{flex:none;min-width:88px;text-align:right;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
 .dshfw-dist__note{margin:0;font-size:11.5px;line-height:1.6;color:var(--dsw-alias-label-tertiary)}
 
+
+.dshfw-dist__bar--debt{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent)}
+.dshfw-dist__bar--debt .dshfw-dist__seg[data-i="0"]{background:var(--dsw-alias-state-error-primary);opacity:.75}
+.dshfw-dist__bar--debt .dshfw-dist__seg[data-i="1"]{background:var(--dsw-alias-state-error-primary);opacity:.6}
+.dshfw-dist__bar--debt .dshfw-dist__seg[data-i="2"]{background:var(--dsw-alias-state-error-primary);opacity:.46}
+.dshfw-dist__bar--debt .dshfw-dist__seg[data-i="3"]{background:var(--dsw-alias-state-error-primary);opacity:.34}
+.dshfw-dist__bar--debt .dshfw-dist__seg[data-i="4"]{background:var(--dsw-alias-state-error-primary);opacity:.24}
+
 /* ── motion ─────────────────────────────────────────────────────────── */
 /* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来
    （被禁用、被容器裁剪、或渲染器提前截图），内容会永久停在 opacity:0 上。 */
@@ -5600,7 +5704,13 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "board.distribution": "资产分布",
       "board.distributionSub": "钱放在哪些形态里",
       "board.viewDetail": "看明细",
-      "board.insuranceNotAsset": "另有 {n} 份保险，保额合计 {amount} —— 保额是理赔条件，不是现在能动的钱，所以不计入资产。"
+      "board.insuranceNotAsset": "另有 {n} 份保险，保额合计 {amount} —— 保额是理赔条件，不是现在能动的钱，所以不计入资产。",
+      "board.debtTitle": "负债构成",
+      "board.debtSub": "共 {total} · 每月要还 {monthly}",
+      "board.debtMonthly": "月供 {amount}",
+      "board.debtRatio": "负债率 {ratio}（欠款 ÷ 资产）。{next}",
+      "board.debtNext": "最近一笔：{name} {days} 天后到期。",
+      "quick.kindLiability": "识别为负债 · 回车录入"
     };
     /** English dictionary. */
     const DICT_EN = {
@@ -5976,7 +6086,13 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       "board.distribution": "Where the money is",
       "board.distributionSub": "How your assets are split",
       "board.viewDetail": "Details",
-      "board.insuranceNotAsset": "Plus {n} insurance policies with {amount} cover — cover is a claim condition, not spendable money, so it is not counted as an asset."
+      "board.insuranceNotAsset": "Plus {n} insurance policies with {amount} cover — cover is a claim condition, not spendable money, so it is not counted as an asset.",
+      "board.debtTitle": "Where the debt is",
+      "board.debtSub": "{total} total · {monthly} per month",
+      "board.debtMonthly": "{amount}/mo",
+      "board.debtRatio": "Debt ratio {ratio} (debt ÷ assets). {next}",
+      "board.debtNext": "Next: {name} due in {days} days.",
+      "quick.kindLiability": "Debt · press Enter to save"
     };
 
     exports.apply = apply;

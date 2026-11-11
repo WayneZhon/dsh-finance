@@ -376,5 +376,11 @@
   "board.distribution": "资产分布",
   "board.distributionSub": "钱放在哪些形态里",
   "board.viewDetail": "看明细",
-  "board.insuranceNotAsset": "另有 {n} 份保险，保额合计 {amount} —— 保额是理赔条件，不是现在能动的钱，所以不计入资产。"
+  "board.insuranceNotAsset": "另有 {n} 份保险，保额合计 {amount} —— 保额是理赔条件，不是现在能动的钱，所以不计入资产。",
+  "board.debtTitle": "负债构成",
+  "board.debtSub": "共 {total} · 每月要还 {monthly}",
+  "board.debtMonthly": "月供 {amount}",
+  "board.debtRatio": "负债率 {ratio}（欠款 ÷ 资产）。{next}",
+  "board.debtNext": "最近一笔：{name} {days} 天后到期。",
+  "quick.kindLiability": "识别为负债 · 回车录入"
 }

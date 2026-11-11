@@ -376,5 +376,11 @@
   "board.distribution": "Where the money is",
   "board.distributionSub": "How your assets are split",
   "board.viewDetail": "Details",
-  "board.insuranceNotAsset": "Plus {n} insurance policies with {amount} cover — cover is a claim condition, not spendable money, so it is not counted as an asset."
+  "board.insuranceNotAsset": "Plus {n} insurance policies with {amount} cover — cover is a claim condition, not spendable money, so it is not counted as an asset.",
+  "board.debtTitle": "Where the debt is",
+  "board.debtSub": "{total} total · {monthly} per month",
+  "board.debtMonthly": "{amount}/mo",
+  "board.debtRatio": "Debt ratio {ratio} (debt ÷ assets). {next}",
+  "board.debtNext": "Next: {name} due in {days} days.",
+  "quick.kindLiability": "Debt · press Enter to save"
 }

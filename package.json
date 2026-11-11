@@ -1,6 +1,6 @@
 {
   "name": "@wayne/dsh-finance",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": false,
   "description": "家庭保单管家 + 记账：上传合同识别保单档案、看懂保障、缴费与到期提醒可完成；账单导入自动分类合并。数据只存本机。",
   "license": "MIT",
