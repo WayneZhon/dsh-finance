@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
     /** API root. */
     const API_BASE = "/dsh-finance/api";
     /** The four tabs, in display order. */
-    const TABS = Object.freeze(["workbench", "board", "flow", "assets", "policy", "invest", "plan"]);
+    const TABS = Object.freeze(["board", "flow", "assets", "policy", "invest", "plan"]);
     /** Expense categories (CONTRACT: shared with the Host). */
     const CATEGORIES = Object.freeze(["餐饮", "交通", "购物", "居家", "家庭", "医疗", "教育", "娱乐", "通讯", "人情往来", "保险", "还贷", "投资", "其他"]);
     /** Income is always this one category. */
@@ -950,7 +950,7 @@ window.__ModuleLoader__.load({
         txns: [],
         /** Whether the previous load already had data (drives the skeleton). */
         everLoaded: false,
-        tab: "workbench",
+        tab: "board",
         /** Active category filter, shared by the donut legend and the table. */
         filterCategory: "",
         /** Live search text. */
@@ -2399,235 +2399,6 @@ window.__ModuleLoader__.load({
 
 
 
-    // ── 工作台：我现在要做什么 ────────────────────────────────────────────
-
-    /** 待办类型的中文/图标语义（颜色用于区分紧急度而非类型）。 */
-    const TODO_LABELS = Object.freeze({
-      premium: "续期缴费",
-      maturity: "到期处理",
-      waiting: "等待期结束",
-      grace: "犹豫期结束",
-      checkup: "保单检查",
-      claim: "理赔跟进"
-    });
-
-    /**
-     * 一行待办：标题 + 还剩几天 + 完成/稍后。
-     *
-     * 「完成」与「稍后」是这整套设计的落点——提醒的意义在于**能被执行**，
-     * 不能执行的提醒只是噪音。
-     */
-    function TodoRow({ todo, onDone, onSnooze }) {
-      const overdue = todo.bucket === "overdue";
-      const today = todo.bucket === "today";
-      return jsxs("li", {
-        className: "dshfw-todo",
-        "data-tone": overdue ? "overdue" : today ? "today" : todo.bucket === "soon" ? "soon" : "later",
-        children: [
-          jsx("span", { className: "dshfw-todo__dot", "aria-hidden": "true" }),
-          jsx("div", {
-            className: "dshfw-todo__main",
-            children: [
-              jsxs("span", {
-                className: "dshfw-todo__title",
-                children: [jsx("i", { className: "dshfw-todo__kind", children: t(`todo.kind.${todo.kind}`) }), todo.title]
-              }),
-              jsxs("span", {
-                className: "dshfw-todo__meta",
-                children: [
-                  todo.dueDate,
-                  todo.amount > 0 ? ` · ${money(todo.amount, { decimals: 0 })}` : "",
-                  todo.detail === "" ? "" : ` · ${todo.detail}`
-                ]
-              })
-            ]
-          }),
-          jsx("span", {
-            className: "dshfw-todo__when dshfw-num",
-            children: overdue
-              ? t("todo.overdue", { n: String(Math.abs(todo.days)) })
-              : todo.days === 0
-                ? t("todo.today")
-                : t("todo.inDays", { n: String(todo.days) })
-          }),
-          jsxs("div", {
-            className: "dshfw-todo__actions",
-            children: [
-              jsx(Button, { tone: "primary", size: "sm", onClick: () => onDone(todo), label: t("todo.done"), children: t("todo.done") }),
-              jsx(Button, { tone: "ghost", size: "sm", onClick: () => onSnooze(todo), label: t("todo.snooze"), children: t("todo.snooze") })
-            ]
-          })
-        ]
-      });
-    }
-
-    /**
-     * 工作台首页。
-     *
-     * 顺序刻意是「待办在前、概览在后」：用户打开面板最想知道的是
-     * **有没有事要做**，而不是先看一堆统计。上传保单是主按钮，
-     * 因为它是让这个页面变得有用的唯一入口。
-     */
-    function WorkbenchPage({ snapshot, onOpenPolicy }) {
-      const [scanning, setScanning] = react.useState(false);
-      const [memberForm, setMemberForm] = react.useState(false);
-      const board = snapshot.workbench ?? { urgent: [], todos: [], overdue: 0, today: 0, soon: 0, counts: {} };
-      const policies = snapshot.policies ?? { calendar: [], family: { byMember: [] } };
-      const urgent = Array.isArray(board.urgent) ? board.urgent : [];
-      const calendar = Array.isArray(policies.calendar) ? policies.calendar : [];
-      const family = policies.family ?? { byMember: [] };
-      const counts = board.counts ?? {};
-      const hasPolicies = num(counts.policies, 0) > 0;
-
-      /** 完成：记下「用户处理了」，不是「钱交了」。缴费类还要看缴费记录。 */
-      const markDone = (todo) => void writeSimple("/todos", { key: todo.key, status: "done" }, "todo.doneToast");
-      /** 稍后：推迟 7 天。 */
-      const snooze = (todo) => {
-        const next = new Date();
-        next.setDate(next.getDate() + 7);
-        void writeSimple(
-          "/todos",
-          { key: todo.key, status: "snoozed", snoozeUntil: dayKey(next) },
-          "todo.snoozeToast"
-        );
-      };
-
-      const maxCalendar = Math.max(1, ...calendar.map((entry) => entry.amount));
-
-      return [
-        // ① 顶部：主按钮 + 速览
-        jsx(Card, {
-          tone: "hero",
-          children: jsxs("div", {
-            className: "dshfw-wb__hero",
-            children: [
-              jsxs("div", {
-                className: "dshfw-wb__intro",
-                children: [
-                  jsx("h2", { className: "dshfw-wb__title", children: t("wb.title") }),
-                  jsx("p", {
-                    className: "dshfw-wb__sub",
-                    children: hasPolicies
-                      ? t("wb.sub", {
-                          n: String(counts.policies ?? 0),
-                          m: String(counts.members ?? 0),
-                          files: String(counts.attachments ?? 0)
-                        })
-                      : t("wb.subEmpty")
-                  })
-                ]
-              }),
-              jsxs("div", {
-                className: "dshfw-wb__actions",
-                children: [
-                  jsx(Button, {
-                    tone: "primary",
-                    icon: jsx(IconUpload, { size: 15 }),
-                    onClick: () => setScanning(true),
-                    label: t("wb.upload"),
-                    children: t("wb.upload")
-                  }),
-                  jsx(Button, { tone: "outline", onClick: () => setMemberForm(true), label: t("wb.addMember"), children: t("wb.addMember") })
-                ]
-              })
-            ]
-          })
-        }),
-        // ② 近期待办
-        jsx(Card, {
-          title: t("wb.todos"),
-          sub: urgent.length === 0 ? t("wb.todosClear") : t("wb.todosSub", { n: String(urgent.length) }),
-          children:
-            urgent.length === 0
-              ? jsx("p", { className: "dshfw-muted", children: hasPolicies ? t("wb.todosEmpty") : t("wb.todosNoPolicy") })
-              : jsx("ul", {
-                  className: "dshfw-todos",
-                  children: urgent.slice(0, 8).map((todo) => jsx(TodoRow, { key: todo.key, todo, onDone: markDone, onSnooze: snooze }))
-                })
-        }),
-        // ③ 家庭保单概览 + ④ 年度缴费日历
-        jsxs("div", {
-          className: "dshfw-grid dshfw-grid--2",
-          children: [
-            jsx(Card, {
-              title: t("wb.family"),
-              children:
-                (family.byMember ?? []).length === 0
-                  ? jsx("p", { className: "dshfw-muted", children: t("wb.familyEmpty") })
-                  : jsx("div", {
-                      className: "dshfw-family",
-                      children: (family.byMember ?? []).map((member) =>
-                        jsxs("div", {
-                          className: "dshfw-family__row",
-                          children: [
-                            jsx("span", { className: "dshfw-family__name", children: member.name }),
-                            jsx("span", { className: "dshfw-family__rel", children: t(`relation.${member.relation}`) }),
-                            jsxs("span", {
-                              className: "dshfw-family__meta dshfw-num",
-                              children: [
-                                t("wb.memberPolicies", { n: String(member.count) }),
-                                member.annualPremium > 0 ? ` · ${t("wb.annual", { amount: money(member.annualPremium, { decimals: 0 }) })}` : ""
-                              ]
-                            }),
-                            jsx("span", {
-                              className: "dshfw-family__coverage dshfw-num",
-                              children: member.coverage > 0 ? money(member.coverage, { decimals: 0 }) : "—"
-                            })
-                          ]
-                        })
-                      )
-                    })
-            }),
-            jsx(Card, {
-              title: t("wb.calendar"),
-              sub: t("wb.calendarSub"),
-              children:
-                calendar.length === 0
-                  ? jsx("p", { className: "dshfw-muted", children: t("wb.calendarEmpty") })
-                  : jsx("div", {
-                      className: "dshfw-cal",
-                      children: calendar.map((entry) =>
-                        jsx("div", {
-                          className: `dshfw-cal__col${entry.amount > 0 ? " has" : ""}`,
-                          title: `${entry.month} · ${money(entry.amount, { decimals: 0 })}`,
-                          children: [
-                            jsx("span", {
-                              className: "dshfw-cal__bar",
-                              style: { height: `${String(Math.max(entry.amount > 0 ? 6 : 0, (entry.amount / maxCalendar) * 100))}%` }
-                            }),
-                            jsx("span", { className: "dshfw-cal__label", children: entry.month.slice(5) })
-                          ]
-                        })
-                      )
-                    })
-            })
-          ]
-        }),
-        // ⑤ 档案不完整提示：识别之后有些字段没认出来，要显眼
-        num(counts.incomplete, 0) > 0
-          ? jsx(Card, {
-              children: jsxs("div", {
-                className: "dshfw-datanote",
-                children: [
-                  jsx("span", { className: "dshfw-datanote__icon", children: jsx(IconWarn, { size: 15 }) }),
-                  jsxs("span", {
-                    className: "dshfw-datanote__body",
-                    children: [
-                      jsx("b", { children: t("wb.incomplete", { n: String(counts.incomplete) }) }),
-                      ` ${t("wb.incompleteHint")}`
-                    ]
-                  })
-                ]
-              })
-            })
-          : null,
-        scanning ? jsx(PolicyScanDialog, { onClose: () => setScanning(false), onSaved: () => setScanning(false) }) : null,
-        memberForm
-          ? jsx(MemberForm, { onClose: () => setMemberForm(false), onSaved: () => setMemberForm(false) })
-          : null
-      ];
-    }
-
     /** 添加家庭成员。 */
     function MemberForm({ onClose, onSaved }) {
       const [name, setName] = react.useState("");
@@ -3119,6 +2890,7 @@ window.__ModuleLoader__.load({
     function PolicyPage({ snapshot }) {
       const [form, setForm] = react.useState(null);
       const [scanning, setScanning] = react.useState(false);
+      const [memberForm, setMemberForm] = react.useState(false);
       const policies = snapshot.policies ?? { items: [], all: [], overdue: 0, soon: 0, totalPremium: 0, totalAmount: 0 };
       const reminders = policies.items;
       const grouped = { insurance: [], deposit: [], wealth: [], other: [] };
@@ -3136,6 +2908,7 @@ window.__ModuleLoader__.load({
             className: "dshfw-card__actions",
             children: [
               jsx(Button, { tone: "outline", size: "sm", icon: jsx(IconUpload, { size: 13 }), onClick: () => setScanning(true), label: t("policy.scan"), children: t("policy.scan") }),
+              jsx(Button, { tone: "outline", size: "sm", icon: jsx(IconPlus, { size: 13 }), onClick: () => setMemberForm(true), label: t("wb.addMember"), children: t("wb.addMember") }),
               jsx(Button, { tone: "outline", size: "sm", icon: jsx(IconPlus, { size: 13 }), onClick: () => setForm({ record: null }), label: t("policy.add"), children: t("policy.add") })
             ]
           }),
@@ -3225,7 +2998,8 @@ window.__ModuleLoader__.load({
           }, key)
         ),
         form === null ? null : jsx(PolicyForm, { record: form.record, onDone: () => setForm(null) }),
-        scanning ? jsx(PolicyScanDialog, { onClose: () => setScanning(false), onSaved: () => setScanning(false) }) : null
+        scanning ? jsx(PolicyScanDialog, { onClose: () => setScanning(false), onSaved: () => setScanning(false) }) : null,
+        memberForm ? jsx(MemberForm, { onClose: () => setMemberForm(false), onSaved: () => setMemberForm(false) }) : null
       ];
     }
 
@@ -4116,15 +3890,39 @@ window.__ModuleLoader__.load({
      *
      * 本月三数仍在「收支」页，这里刻意只讲全年，避免两页说同一件事。
      */
-    function DashboardPage({ snapshot, onFilter }) {
+    /**
+     * 速览卡：一个数字 + 一句说明，可点进对应页面。
+     *
+     * 总看板的意义是「一眼看全」，所以收支之外的三件事（净资产、保障、待办）
+     * 也要在首屏；但只给结论，明细留给各自的页面。
+     */
+    function QuickStat({ label, value, foot, tone = "default", onClick }) {
+      return jsxs("button", {
+        type: "button",
+        className: "dshfw-quickstat",
+        "data-tone": tone,
+        onClick,
+        children: [
+          jsx("span", { className: "dshfw-quickstat__label", children: label }),
+          jsx("span", { className: "dshfw-quickstat__value dshfw-num", children: value }),
+          jsx("span", { className: "dshfw-quickstat__foot", children: foot })
+        ]
+      });
+    }
+
+    function DashboardPage({ snapshot, onFilter, onTab }) {
       const yearly = snapshot.yearly;
       const rows = Array.isArray(snapshot.trend) ? snapshot.trend : [];
+      // 没有流水时**不能吞掉整页**：一户只记保单、或只登记资产的家庭，
+      // 同样需要看到净资产、保障和待办。只让图表部分降级。
       const hasData = rows.some((row) => row.income !== 0 || row.expense !== 0);
-      if (!hasData) {
-        return jsx(Card, { title: t("board.title"), children: jsx("p", { className: "dshfw-muted", children: t("chart.noData") }) });
-      }
       const deficit = yearly.balance < 0;
       const totalBudget = (Array.isArray(snapshot.budgets) ? snapshot.budgets : []).find((row) => row.category === "__total__") ?? null;
+      // 总看板上要能看到保单与待办——但只放「要处理的」，不做第二个保单页
+      const urgentTodos = Array.isArray(snapshot.workbench?.urgent) ? snapshot.workbench.urgent : [];
+      const policiesTotalCoverage = (snapshot.policies?.all ?? [])
+        .filter((policy) => policy.kind === "insurance" && policy.amount !== null && policy.amount !== undefined)
+        .reduce((acc, policy) => acc + policy.amount, 0);
       return jsxs("div", {
         className: "dshfw-board",
         children: [
@@ -4182,6 +3980,116 @@ window.__ModuleLoader__.load({
               })
             ]
           }),
+          // ①.2 速览：净资产、家庭保障、待办。总看板要「一眼看全」，
+          //     所以收支之外的三件事也放在首屏，且都能点进去看明细。
+          jsxs("section", {
+            className: "dshfw-quick3",
+            children: [
+              jsx(QuickStat, {
+                label: t("board.netWorth"),
+                value: money(snapshot.netWorth, { decimals: 0 }),
+                foot: snapshot.netWorth < 0 ? t("board.liabilityHeavy") : t("board.assetsMinusDebt"),
+                tone: snapshot.netWorth < 0 ? "negative" : "default",
+                onClick: () => onTab?.("assets")
+              }),
+              jsx(QuickStat, {
+                label: t("board.coverage"),
+                value: (snapshot.policies?.all ?? []).length === 0
+                  ? "—"
+                  : money(policiesTotalCoverage, { decimals: 0 }),
+                foot: (snapshot.policies?.all ?? []).length === 0
+                  ? t("board.noPolicy")
+                  : t("board.policyCount", { n: String((snapshot.policies?.all ?? []).length) }),
+                onClick: () => onTab?.("policy")
+              }),
+              jsx(QuickStat, {
+                label: t("board.todos"),
+                value: urgentTodos.length === 0 ? t("board.todoNone") : String(urgentTodos.length),
+                foot: urgentTodos.length === 0
+                  ? t("board.todoClearFoot")
+                  : urgentTodos[0].title,
+                tone: urgentTodos.some((todo) => todo.bucket === "overdue") ? "negative" : "default",
+                onClick: () => onTab?.("policy")
+              })
+            ]
+          }),
+          // ①.3 近期待办 + 家庭保障：保单与资产在总看板上要能被看到
+          (urgentTodos.length > 0 || (snapshot.policies?.family?.byMember ?? []).length > 0)
+            ? jsxs("div", {
+                className: "dshfw-grid dshfw-grid--2",
+                children: [
+                  jsx(Card, {
+                    title: t("board.upcoming"),
+                    sub: urgentTodos.length === 0 ? t("board.todoClearFoot") : t("board.todoSub", { n: String(urgentTodos.length) }),
+                    children:
+                      urgentTodos.length === 0
+                        ? jsx("p", { className: "dshfw-muted", children: t("board.todoEmpty") })
+                        : jsx("ul", {
+                            className: "dshfw-todos",
+                            children: urgentTodos.slice(0, 4).map((todo) =>
+                              jsxs("li", {
+                                className: "dshfw-todo",
+                                "data-tone": todo.bucket,
+                                children: [
+                                  jsx("span", { className: "dshfw-todo__dot", "aria-hidden": "true" }),
+                                  jsx("div", {
+                                    className: "dshfw-todo__main",
+                                    children: [
+                                      jsxs("span", {
+                                        className: "dshfw-todo__title",
+                                        children: [jsx("i", { className: "dshfw-todo__kind", children: t(`todo.kind.${todo.kind}`) }), todo.title]
+                                      }),
+                                      jsxs("span", {
+                                        className: "dshfw-todo__meta",
+                                        children: [todo.dueDate, todo.amount > 0 ? ` · ${money(todo.amount, { decimals: 0 })}` : ""]
+                                      })
+                                    ]
+                                  }),
+                                  jsx("span", {
+                                    className: "dshfw-todo__when dshfw-num",
+                                    children: todo.days < 0
+                                      ? t("todo.overdue", { n: String(Math.abs(todo.days)) })
+                                      : todo.days === 0
+                                        ? t("todo.today")
+                                        : t("todo.inDays", { n: String(todo.days) })
+                                  })
+                                ]
+                              })
+                            )
+                          })
+                  }),
+                  jsx(Card, {
+                    title: t("board.familyCoverage"),
+                    children:
+                      (snapshot.policies?.family?.byMember ?? []).length === 0
+                        ? jsx("p", { className: "dshfw-muted", children: t("wb.familyEmpty") })
+                        : jsx("div", {
+                            className: "dshfw-family",
+                            children: (snapshot.policies.family.byMember ?? []).map((member) =>
+                              jsxs("div", {
+                                className: "dshfw-family__row",
+                                children: [
+                                  jsx("span", { className: "dshfw-family__name", children: member.name }),
+                                  jsx("span", { className: "dshfw-family__rel", children: t(`relation.${member.relation}`) }),
+                                  jsxs("span", {
+                                    className: "dshfw-family__meta dshfw-num",
+                                    children: [
+                                      t("wb.memberPolicies", { n: String(member.count) }),
+                                      member.annualPremium > 0 ? ` · ${t("wb.annual", { amount: money(member.annualPremium, { decimals: 0 }) })}` : ""
+                                    ]
+                                  }),
+                                  jsx("span", {
+                                    className: "dshfw-family__coverage dshfw-num",
+                                    children: member.coverage > 0 ? money(member.coverage, { decimals: 0 }) : "—"
+                                  })
+                                ]
+                              })
+                            )
+                          })
+                  })
+                ]
+              })
+            : null,
           // ①.5 数据完整性提醒：先于图表出现，避免用户先被数字吓到
           (Array.isArray(snapshot.dataNotes) ? snapshot.dataNotes : []).map((note, index) =>
             jsxs("div", {
@@ -4198,37 +4106,39 @@ window.__ModuleLoader__.load({
               ]
             })
           ),
+          // ②③④⑤ 图表：没有流水时整段不显示（上层已给出说明）
           // ② 每月收支双柱
-          jsx(Card, {
-            title: t("board.monthlyFlow"),
-            sub: t("board.monthlyFlowSub"),
-            children: [
-              jsx(MonthlyBars, { rows, current: snapshot.month }),
-              jsx(AxisNote, { snapshot })
-            ]
-          }),
-          // ③ 每月结余 + ④ 预算完成度
-          jsxs("div", {
-            className: "dshfw-grid dshfw-grid--2",
-            children: [
-              jsx(Card, {
-                title: t("board.monthlyBalance"),
-                sub: t("board.monthlyBalanceSub"),
-                children: jsx(BalanceBars, { rows, current: snapshot.month })
-              }),
-              jsx(Card, {
-                title: t("board.budget"),
-                sub: t("board.budgetSub"),
-                children: jsx(BudgetProgress, { snapshot, totalBudget })
-              })
-            ]
-          }),
-          // ⑤ 年度支出构成
-          jsx(Card, {
-            title: t("board.category"),
-            sub: t("board.categorySub"),
-            children: jsx(CategoryDonut, { snapshot, onFilter })
-          })
+          ...(hasData
+            ? [
+                jsx(Card, {
+                  title: t("board.monthlyFlow"),
+                  sub: t("board.monthlyFlowSub"),
+                  children: [jsx(MonthlyBars, { rows, current: snapshot.month }), jsx(AxisNote, { snapshot })]
+                }),
+                // ③ 每月结余 + ④ 预算完成度
+                jsxs("div", {
+                  className: "dshfw-grid dshfw-grid--2",
+                  children: [
+                    jsx(Card, {
+                      title: t("board.monthlyBalance"),
+                      sub: t("board.monthlyBalanceSub"),
+                      children: jsx(BalanceBars, { rows, current: snapshot.month })
+                    }),
+                    jsx(Card, {
+                      title: t("board.budget"),
+                      sub: t("board.budgetSub"),
+                      children: jsx(BudgetProgress, { snapshot, totalBudget })
+                    })
+                  ]
+                }),
+                // ⑤ 年度支出构成
+                jsx(Card, {
+                  title: t("board.category"),
+                  sub: t("board.categorySub"),
+                  children: jsx(CategoryDonut, { snapshot, onFilter })
+                })
+              ]
+            : []),
         ]
       });
     }
@@ -4507,8 +4417,7 @@ window.__ModuleLoader__.load({
         body = jsx(EmptyState, {});
       } else {
         const panes = {
-          workbench: [jsx(WorkbenchPage, { snapshot })],
-          board: [jsx(DashboardPage, { snapshot, onFilter })],
+          board: [jsx(DashboardPage, { snapshot, onFilter, onTab: pickTab })],
           flow: [jsx(StatStrip, { snapshot }), jsx("div", { className: "dshfw-grid dshfw-grid--2", children: [jsx(FlowTrend, { snapshot }), jsx(Card, { title: t("flow.top"), children: jsx(TopExpenses, { snapshot, onPick: onFilter }) })] }), jsx(FlowOverview, { snapshot, filter: state.filterCategory, onFilter }), jsx(FlowList, { snapshot })],
           assets: [jsx(AssetsPage, { snapshot })],
           policy: [jsx(PolicyPage, { snapshot })],
@@ -5096,6 +5005,18 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
 .dshfw-cal__col.has .dshfw-cal__bar{background:var(--dshfw-accent);opacity:.85}
 .dshfw-cal__label{font-size:10.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 
+
+/* ── 总看板速览三卡 ──────────────────────────────────────────────────── */
+.dshfw-quick3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:720px){.dshfw-quick3{grid-template-columns:minmax(0,1fr)}}
+.dshfw-quickstat{display:flex;flex-direction:column;gap:5px;padding:14px 16px;border:.5px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2,transparent);text-align:left;font-family:inherit;cursor:pointer;transition:border-color .14s ease,background .14s ease}
+.dshfw-quickstat:hover{border-color:var(--dshfw-accent);background:color-mix(in srgb,var(--dshfw-accent) 5%,transparent)}
+.dshfw-quickstat:focus-visible{outline:2px solid var(--dshfw-accent);outline-offset:2px}
+.dshfw-quickstat__label{font-size:11.5px;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary)}
+.dshfw-quickstat__value{font-size:21px;line-height:1.25;letter-spacing:-.02em;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.dshfw-quickstat[data-tone="negative"] .dshfw-quickstat__value{color:var(--dsw-alias-state-error-primary)}
+.dshfw-quickstat__foot{font-size:11.5px;line-height:1.4;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* ── motion ─────────────────────────────────────────────────────────── */
 /* 进入动画的终态必须是「完全可见」，且用 both 填满——否则动画一旦没跑起来
    （被禁用、被容器裁剪、或渲染器提前截图），内容会永久停在 opacity:0 上。 */
@@ -5182,7 +5103,7 @@ ${DARK_SCOPE} .dshfw-page{${dark};--dshfw-income:#79A9C6;--dshfw-pos:#E08A74;--d
       );
       // A fresh generation is a fresh page: it opens on this month, with no
       // filter, no half-finished wizard, nothing carried over.
-      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "workbench", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
+      appStore.state = { ...appStore.state, month: monthKey(), phase: "idle", snapshot: null, txns: [], tab: "board", filterCategory: "", query: "", openTxnId: "", editor: null, wizard: null, insight: null, toast: null, error: null };
       if (typeof ctx.effect === "function") {
         ctx.effect(() => () => {
           for (const dispose of disposers) {

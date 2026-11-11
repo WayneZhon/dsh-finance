@@ -397,6 +397,7 @@ const snapshotOf = (ledger, month, now) => {
     monthsAvailable,
     dataNotes: [],
     policies: snapshotPolicies(ledger),
+    workbench: snapshotWorkbench(ledger),
     yearly: {
       year: month.slice(0, 4),
       income,
@@ -437,7 +438,65 @@ const snapshotPolicies = (ledger) => {
     next: items[0] ?? null,
     all: list,
     totalPremium: list.filter((p) => p.kind === "insurance").reduce((acc, p) => acc + (p.premium ?? 0), 0),
-    totalAmount: list.reduce((acc, p) => acc + (p.amount ?? 0), 0)
+    totalAmount: list.reduce((acc, p) => acc + (p.amount ?? 0), 0),
+    // 家庭概览：按成员分组（与真 Host 的 familyOverview 同口径）
+    family: (() => {
+      const members = Array.isArray(ledger.members) ? ledger.members : [];
+      return {
+        byMember: members.map((member) => {
+          const owned = list.filter((policy) => policy.memberId === member.id);
+          return {
+            id: member.id,
+            name: member.name,
+            relation: member.relation ?? "other",
+            count: owned.length,
+            insuranceCount: owned.filter((policy) => policy.kind === "insurance").length,
+            depositCount: owned.filter((policy) => policy.kind !== "insurance").length,
+            annualPremium: owned.filter((policy) => policy.kind === "insurance").reduce((acc, policy) => acc + (policy.premium ?? 0), 0),
+            coverage: owned.filter((policy) => policy.kind === "insurance").reduce((acc, policy) => acc + (policy.amount ?? 0), 0),
+            policies: owned.map((policy) => ({ id: policy.id, name: policy.name, kind: policy.kind, type: policy.type }))
+          };
+        }),
+        unassigned: list.filter((policy) => !policy.memberId).map((policy) => ({ id: policy.id, name: policy.name, kind: policy.kind })),
+        total: list.length
+      };
+    })(),
+    members: (Array.isArray(ledger.members) ? ledger.members : []).map((member) => ({ ...member })),
+    payments: (Array.isArray(ledger.payments) ? ledger.payments : []).map((payment) => ({ ...payment }))
+  };
+};
+
+/** 工作台聚合：与真 Host 的 workbench 同口径（这里从待办派生）。 */
+const snapshotWorkbench = (ledger) => {
+  const policies = snapshotPolicies(ledger);
+  const todos = policies.items
+    .filter((item) => item.bucket === "overdue" || item.bucket === "soon" || item.bucket === "upcoming")
+    .map((item) => ({
+      key: `${item.id}:premium:${item.dueDate}`,
+      policyId: item.id,
+      kind: item.kind === "insurance" ? "premium" : "maturity",
+      title: `${item.name} ${item.kind === "insurance" ? "续期缴费" : "到期"}`,
+      detail: item.kind === "insurance" ? "年缴" : "",
+      dueDate: item.dueDate,
+      amount: item.kind === "insurance" ? item.premium : item.amount,
+      memberId: item.memberId ?? "",
+      days: item.days,
+      bucket: item.days < 0 ? "overdue" : item.days === 0 ? "today" : item.days <= 30 ? "soon" : "later",
+      status: "pending",
+      note: ""
+    }));
+  return {
+    urgent: todos.filter((todo) => todo.bucket !== "later"),
+    todos,
+    overdue: todos.filter((todo) => todo.bucket === "overdue").length,
+    today: todos.filter((todo) => todo.bucket === "today").length,
+    soon: todos.filter((todo) => todo.bucket === "soon").length,
+    counts: {
+      policies: policies.all.length,
+      members: (ledger.members ?? []).length,
+      attachments: 0,
+      incomplete: 0
+    }
   };
 };
 
@@ -1114,10 +1173,10 @@ const open = async (ledger, options = {}) => {
   const ui = fresh();
   let tree = await settlePage(ui);
   const wanted = options.tab ?? "flow";
-  // 面板默认落在「工作台」，其余页都要点一下 tab 切过去
-  const TAB_LABELS = { workbench: "工作台", board: "总看板", flow: "收支", assets: "资产", policy: "保单", invest: "投资", plan: "规划" };
+  // 面板默认落在「总看板」，其余页都要点一下 tab 切过去
+  const TAB_LABELS = { board: "总看板", flow: "收支", assets: "资产", policy: "保单", invest: "投资", plan: "规划" };
   const label = TAB_LABELS[wanted] ?? wanted;
-  if (wanted !== "workbench") {
+  if (wanted !== "board") {
     press(tree, label);
     tree = await settlePage(ui);
   }
@@ -1833,6 +1892,61 @@ test("saving a reviewed policy writes exactly one record", async () => {
   assert.equal(writes[0].body.name, "平安福重大疾病保险");
   assert.equal(writes[0].body.amount, 50_000_000, "保额 50 万按分");
   assert.equal(writes[0].body.premium, 486_000, "年缴保费 4860 按分");
+});
+
+
+test("the overview leads with income, expense and balance for the year", async () => {
+  const { tree } = await open(undefined, { tab: "board" });
+  const hero = byClass(tree, "dshfw-board__big");
+  assert.equal(hero.length, 3, "三个大数：支出 / 收入 / 结余");
+});
+
+test("the overview shows net worth, coverage and todo counts at a glance", async () => {
+  const ledger = sampleLedger();
+  ledger.assets = [{ id: "asset1", name: "活期", kind: "cash", value: 18_500_000 }];
+  ledger.liabilities = [];
+  ledger.members = [{ id: "m1", name: "我", relation: "self" }];
+  ledger.policies = [
+    { id: "pol1", kind: "insurance", name: "平安重疾险", memberId: "m1", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  const stats = byClass(tree, "dshfw-quickstat");
+  assert.equal(stats.length, 3, "净资产 / 家庭保障 / 待处理");
+  const text = textOf(tree);
+  assert.match(text, /净资产/, "净资产一栏");
+  assert.match(text, /家庭保障/, "保障一栏");
+  assert.match(text, /待处理/, "待办一栏");
+  // 净资产要真的有数字，不是 0
+  assert.match(text, /¥185,000/, "净资产取资产的合计");
+});
+
+test("the overview lists upcoming todos and family coverage", async () => {
+  const ledger = sampleLedger();
+  ledger.members = [{ id: "m1", name: "我", relation: "self" }];
+  ledger.policies = [
+    { id: "pol1", kind: "insurance", name: "平安重疾险", memberId: "m1", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" },
+  ];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  assert.ok(byClass(tree, "dshfw-todo").length >= 1, "看板上有待办行");
+  assert.ok(byClass(tree, "dshfw-family__row").length >= 1, "看板上有成员保障行");
+});
+
+test("clicking the policy stat switches to the policies tab", async () => {
+  const ledger = sampleLedger();
+  ledger.policies = [{ id: "pol1", kind: "insurance", name: "平安重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
+  const { ui, tree } = await open(() => ledger, { tab: "board" });
+  const stats = byClass(tree, "dshfw-quickstat");
+  // 第二张是「家庭保障」
+  fire(stats[1]);
+  const next = await settlePage(ui);
+  assert.match(textOf(next), /到期与续保提醒/, "跳到了保单页");
+});
+
+test("a ledger with policies but no transactions still renders the overview", async () => {
+  const ledger = emptyLedger();
+  ledger.policies = [{ id: "pol1", kind: "insurance", name: "平安重疾险", amount: 50_000_000, premium: 486_000, payCycle: "yearly", dueDate: "2026-11-20" }];
+  const { tree } = await open(() => ledger, { tab: "board" });
+  assert.doesNotMatch(textOf(tree), /还没有账本/, "有保单就不该显示空账本引导");
 });
 
 test("a real ledger never shows the demo notice", async () => {
