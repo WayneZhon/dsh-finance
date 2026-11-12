@@ -1,0 +1,91 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Wayne DSH Plugins",
+    "zh": "Wayne 的 DSH 插件"
+  },
+  "description": {
+    "en": "Personal plugins for DeepSeek Harness: local-first finance and family policy management.",
+    "zh": "DeepSeek Harness 个人插件：本地优先的记账与家庭保单管理。"
+  },
+  "metadata": {
+    "categories": {
+      "finance": {
+        "title": {
+          "en": "Finance",
+          "zh": "理财记账"
+        }
+      }
+    },
+    "labels": {
+      "localFirst": {
+        "title": {
+          "en": "Local-first",
+          "zh": "本地优先"
+        }
+      },
+      "offline": {
+        "title": {
+          "en": "Works offline",
+          "zh": "离线可用"
+        }
+      }
+    },
+    "sortKeys": {
+      "stars": {
+        "title": {
+          "en": "Stars",
+          "zh": "星标"
+        },
+        "order": "desc"
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "@wayne/dsh-finance",
+      "title": {
+        "en": "Family Finance & Policy Desk",
+        "zh": "家庭保单管家 · 记账工作台"
+      },
+      "description": {
+        "en": "Import Alipay/WeChat bills with automatic de-duplication, record anything in one sentence, upload insurance contracts for local OCR, and see income, assets, coverage and debt on one dashboard. Data never leaves your machine.",
+        "zh": "导入支付宝/微信账单自动分类并跨账单去重，一句话录入流水、资产、持仓、保单、负债；上传保单合同本地 OCR 识别并生成保障卡片；总看板一屏看全收支、资产、保障与负债。数据只存本机。"
+      },
+      "author": "WayneZhon",
+      "homepage": "https://github.com/WayneZhon/dsh-finance#readme",
+      "repository": "https://github.com/WayneZhon/dsh-finance",
+      "metadata": {
+        "category": "finance",
+        "labels": [
+          "localFirst",
+          "offline"
+        ],
+        "keywords": [
+          "dsh-plugin",
+          "personal-finance",
+          "expense-tracker",
+          "bill-import",
+          "alipay",
+          "wechat-pay",
+          "insurance",
+          "policy",
+          "记账",
+          "保单",
+          "理财"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.9.0",
+          "publishTimestamp": 1794378438,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/WayneZhon/dsh-finance",
+            "commit": "05d8034d5d9be8ae38adbe0071522ecf5b74c307"
+          }
+        }
+      ]
+    }
+  ]
+}

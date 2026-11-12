@@ -35,7 +35,8 @@
     "README.md",
     "LICENSE",
     "docs",
-    "!docs/images"
+    "!docs/images",
+    "market"
   ],
   "keywords": [
     "deepseek-harness",
@@ -70,8 +71,10 @@
     "check": "node --check index.js && node scripts/build.mjs --check",
     "test": "node --test lib/ scripts/test-integration.mjs && node scripts/test.mjs",
     "demo": "node scripts/make-demo.mjs",
-    "prepublishOnly": "node scripts/prepublish.mjs && npm test",
-    "pack:check": "npm pack --dry-run"
+    "prepublishOnly": "node scripts/prepublish.mjs && npm test && npm run market",
+    "pack:check": "npm pack --dry-run",
+    "market": "node scripts/build-market-index.mjs",
+    "market:check": "node scripts/build-market-index.mjs --check"
   },
   "engines": {
     "node": ">=20"

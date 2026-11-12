@@ -315,3 +315,34 @@ npm run prepublishOnly  # 发布前门禁（npm publish 会自动跑）
 ## License
 
 MIT — 见 [LICENSE](LICENSE)。
+---
+
+## 在插件市场里分发
+
+DSH 的插件市场**没有中心化商店**：它读的是用户自己配置的**索引 URL**。
+索引是一份 JSON（format 1），用户把它填进 Discover 面板，就能搜到并一键安装。
+
+本仓库自带生成脚本：
+
+```bash
+npm run market          # 生成 market/index.json（从 git 取 commit，从 package.json 取版本）
+npm run market:check    # 校验已提交的索引是否最新
+```
+
+两个容易写错的字段由脚本现算，不要手写：
+
+- `source.commit` 必须是 **40 位小写 commit SHA**。annotated tag 的 `rev-parse` 返回的是 tag 对象，必须 `^{commit}` 解引用，否则 pnpm 装不到东西。
+- `publishTimestamp` 是 **Unix 秒**，不是毫秒。
+
+### 直接装（不经过市场）
+
+```bash
+# 钉死 commit，内容不会漂移
+git+https://github.com/WayneZhon/dsh-finance.git#<40-hex-sha>
+```
+
+### 关于 engines.dsh
+
+本插件**刻意不声明** `engines.dsh`。DSH 当前是 `0.2.1-rc.5` 这类预发布版本，
+而 semver 的范围在没有预发布标识时会排除预发布版本——随手写 `>=0.2.1`
+会让插件被判定为「不兼容」而装不上。要约束必须写 `>=0.2.1-0`。
